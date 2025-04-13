@@ -4,6 +4,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Api", "Api\Api.csproj", "{0
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Queryable", "Queryable\Queryable.csproj", "{249DB358-8299-4EE6-B62F-945D60CA01AB}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{AED9AB2B-B519-497E-B916-79193905FDF6}"
+				ProjectSection(SolutionItems) = preProject
+                    .gitignore = .gitignore
+				EndProjectSection
+EndProject
+s
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
