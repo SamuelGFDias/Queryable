@@ -5,17 +5,20 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+        <IsPackable>true</IsPackable>
 
         <!-- Informações do pacote -->
-        <Title>Queryable</Title>
+        <PackageId>Queryable.DynamicFilter</PackageId>
+        <Title>Queryable.DynamicFilter</Title>
         <Description>Filtro dinâmico com QueryString para APIs em ASP.NET.</Description>
+        <Authors>samueldias21</Authors>
         <PackageTags>aspnetcore filters querystring linq expression api efcore</PackageTags>
 
         <!-- Licença e publicação -->
+        <PackageProjectUrl>https://github.com/SamuelGFDias/Queryable</PackageProjectUrl>
         <RepositoryUrl>https://github.com/SamuelGFDias/Queryable</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
         <PackageReadmeFile>README.md</PackageReadmeFile>
-        <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
     </PropertyGroup>

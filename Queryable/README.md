@@ -1,4 +1,4 @@
-# Queryable
+# Queryable.DynamicFilter
 
 **Filtro dinâmico via query string para ASP.NET Core APIs.**  
 Facilite a construção de filtros avançados (`gt`, `in`, `contains`, `null`, etc.), ordenação múltipla e paginação em APIs com suporte a LINQ Expression.
@@ -8,7 +8,7 @@ Facilite a construção de filtros avançados (`gt`, `in`, `contains`, `null`, e
 ## 🚀 Instalação
 
 ```bash
-dotnet add package Queryable
+dotnet add package Queryable.DynamicFilter
 ```
 
 ---
