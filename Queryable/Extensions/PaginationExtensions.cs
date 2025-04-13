@@ -5,14 +5,12 @@ namespace Queryable.Extensions;
 public static class PaginationExtensions
 {
     public static PagedResult<T> ToPagedResult<T>(
-        this IQueryable<T> query,
+        this List<T> items,
         int page,
         int pageSize,
         int totalCount
     )
     {
-        List<T> items = query.ToList();
-
         return new PagedResult<T>
         {
             Items = items,

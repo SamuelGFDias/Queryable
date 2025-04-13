@@ -13,18 +13,18 @@ public class ProdutoController(
 ) : ControllerBase
 {
     [HttpGet]
-    [Route("")]
-    public IActionResult Get([FromQuery] QuerySpec<Produto> spec)
+    [Route("buscar")]
+    public async Task<ActionResult<PagedResult<ProdutoDto>>> Get([FromQuery] QuerySpec<Produto> spec)
     {
-        PagedResult<Produto> resultado = produtoService.Buscar(spec);
+        PagedResult<ProdutoDto> resultado = await produtoService.Buscar(spec);
         return Ok(resultado);
     }
 
     [HttpPost]
-    [Route("")]
+    [Route("criar")]
     public async Task<IActionResult> Post([FromBody] CriarProduto produto)
     {
-        await produtoService.Criar((Produto)produto);
+        await produtoService.Criar(produto);
         return Ok();
     }
 }

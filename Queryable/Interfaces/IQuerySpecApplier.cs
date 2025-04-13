@@ -4,5 +4,6 @@ namespace Queryable.Interfaces;
 
 public interface IQuerySpecApplier
 {
-    PagedResult<T> Apply<T>(IQueryable<T> query, QuerySpec<T> spec);
+    IQueryable<T> Apply<T>(IQueryable<T> query, QuerySpec<T> spec);
+    IQueryable<T> ApplyPaged<T>(IQueryable<T> query, QuerySpec<T> spec);
 }

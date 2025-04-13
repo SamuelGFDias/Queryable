@@ -1,7 +1,8 @@
 # Queryable.DynamicFilter
 
 **Filtro dinâmico via query string para ASP.NET Core APIs.**  
-Facilite a construção de filtros avançados (`gt`, `in`, `contains`, `null`, etc.), ordenação múltipla e paginação em APIs com suporte a LINQ Expression.
+Facilite a construção de filtros avançados (`gt`, `in`, `contains`, `null`, etc.), ordenação múltipla e paginação em
+APIs com suporte a LINQ Expression.
 
 ---
 
@@ -50,7 +51,9 @@ GET /api/produto?sort=nome,-preco
 
 ```json
 {
-  "items": [ /* lista de resultados */ ],
+  "items": [
+    /* lista de resultados */
+  ],
   "meta": {
     "page": 1,
     "pageSize": 10,
@@ -77,16 +80,40 @@ services.AddControllers(options =>
 });
 ```
 
-No controller:
+### Exemplo no repository:
 
 ```csharp
-[HttpGet]
-public IActionResult Get(QuerySpec<Produto> spec)
+public class ProdutoRepository(AppDbContext context) : IProdutoRepository
 {
-    var resultado = _querySpecApplier.Apply(_context.Produtos, spec);
-    return Ok(resultado);
+    public IQueryable<Produto> GetQueryable()
+    {
+        return context.Set<Produto>();
+    }
 }
 ```
+---
+
+### Exemplo no serviço:
+
+```csharp
+public async Task<PagedResult<ProdutoDto>> Buscar(QuerySpec<Produto> spec)
+{
+    IQueryable<Produto> query = repository.GetQueryable();
+    IQueryable<Produto> filtered = querySpecApplier.Apply(query, spec);
+
+    int totalCount = await filtered.CountAsync();
+
+    IQueryable<Produto> paged = querySpecApplier.ApplyPaged(filtered, spec);
+
+    List<ProdutoDto> dto = await paged
+                                .Select(x => (ProdutoDto)x)
+                                .ToListAsync();
+
+    return dto.ToPagedResult(spec.Page, spec.PageSize, totalCount);
+}
+```
+
+> Você pode ou não fazer a [conversão explicita](#definindo-dto-para-produtos) entre a Entidade e a DTO.
 
 ---
 
@@ -100,8 +127,36 @@ public class Produto
 
     [Queryable("preco")]
     public decimal Preco { get; set; }
+
+    [Queryable("criado")]
+    public DateTime Criado { get; set; }
 }
 ```
+
+---
+
+### Definindo DTO para produtos
+
+```csharp
+public class ProdutoDto
+{
+    public string? Descricao { get; init; }
+    public double Preco { get; init; }
+    public DateTime Criacao { get; init; }
+
+    public static explicit operator ProdutoDto(Produto produto)
+    {
+        return new ProdutoDto
+        {
+            Descricao = produto.Descricao,
+            Preco = produto.Preco,
+            Criacao = produto.Criado
+        };
+    }
+}
+```
+
+> O `explicit operator` me permite realizar o casting de `Produto` para `ProdutoDto` no [Service](#exemplo-no-serviço).
 
 ---
 

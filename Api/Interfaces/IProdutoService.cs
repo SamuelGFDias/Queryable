@@ -1,10 +1,11 @@
-﻿using Api.Models;
+﻿using Api.Dtos;
+using Api.Models;
 using Queryable.Core;
 
 namespace Api.Interfaces;
 
 public interface IProdutoService
 {
-    PagedResult<Produto> Buscar(QuerySpec<Produto> spec);
-    Task Criar(Produto produto);
+    Task<PagedResult<ProdutoDto>> Buscar(QuerySpec<Produto> spec);
+    Task Criar(CriarProduto produto);
 }

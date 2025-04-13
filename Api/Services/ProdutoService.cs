@@ -1,7 +1,9 @@
-﻿using Api.Interfaces;
+﻿using Api.Dtos;
+using Api.Interfaces;
 using Api.Models;
-using Api.Repositories;
+using Microsoft.EntityFrameworkCore;
 using Queryable.Core;
+using Queryable.Extensions;
 using Queryable.Interfaces;
 
 namespace Api.Services;
@@ -9,14 +11,24 @@ namespace Api.Services;
 public class ProdutoService(IProdutoRepository repository, IQuerySpecApplier querySpecApplier)
     : IProdutoService
 {
-    public PagedResult<Produto> Buscar(QuerySpec<Produto> spec)
+    public async Task<PagedResult<ProdutoDto>> Buscar(QuerySpec<Produto> spec)
     {
         IQueryable<Produto> query = repository.GetQueryable();
-        return querySpecApplier.Apply(query, spec);
+        IQueryable<Produto> filtered = querySpecApplier.Apply(query, spec);
+        
+        int totalCount = await filtered.CountAsync();
+
+        IQueryable<Produto> paged = querySpecApplier.ApplyPaged(filtered, spec);
+
+        List<ProdutoDto> dto = await paged
+                                    .Select(x => (ProdutoDto)x)
+                                    .ToListAsync();
+
+        return dto.ToPagedResult(spec.Page, spec.PageSize, totalCount);
     }
 
-    public async Task Criar(Produto produto)
+    public async Task Criar(CriarProduto produto)
     {
-        await repository.Create(produto);
+        await repository.Create((Produto)produto);
     }
 }
