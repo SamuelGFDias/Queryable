@@ -1,4 +1,4 @@
-# Queryable.DynamicFilter
+ # Queryable.DynamicFilter
 
 **Filtro dinâmico via query string para ASP.NET Core APIs.**  
 Facilite a construção de filtros avançados (`gt`, `in`, `contains`, `null`, etc.), ordenação múltipla e paginação em
@@ -30,7 +30,7 @@ dotnet add package Queryable.DynamicFilter
 GET /api/produto?preco__gt=10&preco__lt=100
 GET /api/produto?descricao__contains=camisa
 GET /api/produto?status__in=Ativo,Inativo
-GET /api/produto?criado__from=2024-01-01&criado__to=2024-12-31
+GET /api/produto?criado__gte=2024-01-01&criado__lte=2024-12-31
 GET /api/produto?nome__eq=null
 ```
 
