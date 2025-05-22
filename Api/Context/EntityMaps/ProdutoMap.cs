@@ -21,5 +21,13 @@ public class ProdutoMap : IEntityTypeConfiguration<Produto>
 
         builder.Property(a => a.Criado)
                .IsRequired();
+
+        builder.OwnsOne(
+            a => a.Address,
+            b =>
+            {
+                b.Property(x => x.Rua)
+                 .HasMaxLength(255);
+            });
     }
 }

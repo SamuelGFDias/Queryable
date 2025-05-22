@@ -1,26 +1,40 @@
-# Queryable.DynamicFilter
+# Queryable.DynamicFilter 2.1.0
 
-**Filtro dinâmico via query string para ASP.NET Core APIs.**  
-Facilite a construção de filtros avançados (`gt`, `in`, `contains`, `null`, etc.), ordenação múltipla e paginação em
-APIs com suporte a LINQ Expression.
+**Filtro dinâmico via query string para ASP.NET Core APIs.**
+Facilite a construção de filtros avançados (`gt`, `in`, `contains`, `null`, etc.), ordenação múltipla e paginação em APIs com suporte a LINQ Expression.
 
 ---
 
 ## 🚀 Instalação
 
 ```bash
-dotnet add package Queryable.DynamicFilter
+dotnet add package Queryable.DynamicFilter --version 2.1.0
 ```
 
 ---
 
 ## 🧠 O que esse pacote resolve
 
-- ✅ Filtros com operadores como `__eq`, `__gt`, `__in`, `__contains`, etc.
-- ✅ Ordenação com múltiplos campos (ex: `?sort=nome,-preco`)
-- ✅ Paginação com metadados completos (`totalPages`, `hasNext`, etc.)
-- ✅ Compatível com qualquer `IQueryable<T>` (EF Core, Linq2Objects, etc.)
-- ✅ Encapsulado em classes com responsabilidade única
+* ✅ Filtros com operadores como `__eq`, `__gt`, `__in`, `__contains`, etc.
+* ✅ Ordenação com múltiplos campos (ex: `?sort=nome,-preco`)
+* ✅ Paginação com metadados completos (`totalPages`, `hasNext`, etc.)
+* ✅ Compatível com qualquer `IQueryable<T>` (EF Core, Linq2Objects, etc.)
+* ✅ Suporte a **propriedades aninhadas** (ex: `endereco.cidade__eq=São Paulo`)
+* ✅ Encapsulado em classes com responsabilidade única
+
+---
+
+## 🆕 Novidades da versão 2.1.0
+
+1. **Suporte a propriedades aninhadas em filtros**
+
+    * Agora você pode filtrar por campos internos de objetos complexos. Basta usar o separador `.` na query string.
+    * Exemplo: `GET /api/cliente?endereco.cidade__contains=Rio` 
+
+2**Refatoração interna do `QueryBuilder`**
+
+    * Código limpo e modular para processar propriedades aninhadas.
+    * Mais performance na construção de expressões.
 
 ---
 
@@ -34,6 +48,13 @@ GET /api/produto?criado__from=2024-01-01&criado__to=2024-12-31
 GET /api/produto?nome__eq=null
 ```
 
+## 🏠 Filtros em propriedades aninhadas
+
+```http
+GET /api/cliente?endereco.cidade__eq=São Paulo
+GET /api/cliente?address.rua__contains=Travessa&address.numero__gt=100
+```
+
 ---
 
 ## ↕️ Ordenação
@@ -42,8 +63,8 @@ GET /api/produto?nome__eq=null
 GET /api/produto?sort=nome,-preco
 ```
 
-- `nome`: ascendente
-- `-preco`: descendente
+* `nome`: ascendente
+* `-preco`: descendente
 
 ---
 
@@ -51,9 +72,7 @@ GET /api/produto?sort=nome,-preco
 
 ```json
 {
-  "items": [
-    /* lista de resultados */
-  ],
+  "items": [ /* lista de resultados */ ],
   "meta": {
     "page": 1,
     "pageSize": 10,
@@ -80,10 +99,12 @@ services.AddControllers(options =>
 });
 ```
 
+---
+
 ### Exemplo no repository:
 
 ```csharp
-public class ProdutoRepository(AppDbContext context) : IProdutoRepository
+public class ProdutoRepository : IProdutoRepository
 {
     public IQueryable<Produto> GetQueryable()
     {
@@ -91,6 +112,7 @@ public class ProdutoRepository(AppDbContext context) : IProdutoRepository
     }
 }
 ```
+
 ---
 
 ### Exemplo no serviço:
@@ -113,7 +135,7 @@ public async Task<PagedResult<ProdutoDto>> Buscar(QuerySpec<Produto> spec)
 }
 ```
 
-> Você pode ou não fazer a [conversão explicita](#definindo-dto-para-produtos) entre a Entidade e a DTO.
+> Você pode ou não fazer a [conversão explícita](#definindo-dto-para-produtos) entre a Entidade e a DTO.
 
 ---
 
@@ -130,6 +152,10 @@ public class Produto
 
     [Queryable("criado")]
     public DateTime Criado { get; set; }
+
+    // Propriedade aninhada Address
+    [Queryable("address.rua")]
+    public Address Endereco { get; set; }
 }
 ```
 

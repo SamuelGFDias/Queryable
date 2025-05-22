@@ -7,6 +7,7 @@ public class ProdutoDto
     public string? Descricao { get; init; }
     public double Preco { get; init; }
     public DateTime Criacao { get; init; }
+    public string? Rua { get; init; }
 
     public static explicit operator ProdutoDto(Produto produto)
     {
@@ -14,7 +15,8 @@ public class ProdutoDto
         {
             Descricao = produto.Descricao,
             Preco = produto.Preco,
-            Criacao = produto.Criado
+            Criacao = produto.Criado,
+            Rua = produto.Address?.Rua
         };
     }
 }

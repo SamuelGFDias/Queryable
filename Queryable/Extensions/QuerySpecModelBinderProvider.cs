@@ -14,7 +14,7 @@ public class QuerySpecModelBinderProvider : IModelBinderProvider
 
         if (genericType == typeof(QuerySpec<>))
         {
-            Type binderType = typeof(Queryable.Extensions.QuerySpecModelBinder<>).MakeGenericType(context.Metadata.ModelType.GetGenericArguments()[0]);
+            Type binderType = typeof(QuerySpecModelBinder<>).MakeGenericType(context.Metadata.ModelType.GetGenericArguments()[0]);
             return (IModelBinder?)Activator.CreateInstance(binderType);
         }
 
