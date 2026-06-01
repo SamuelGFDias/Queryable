@@ -1,0 +1,16 @@
+bin/
+obj/
+.vs/
+.vscode/
+packages/
+TestResults/
+*.user
+*.suo
+*.cache
+*.pdb
+
+# Excluir API e solução estendida do pacote
+Api/
+Queryable.slnx
+repomix-output.xml
+repomix-output.md

@@ -1,8 +1,7 @@
 ﻿<Solution>
     <Folder Name="/Solution Items/">
-        <File Path=".gitignore"/>
-        <File Path="Directory.Packages.propsv"/>
+        <File Path=".gitignore" />
+        <File Path="Directory.Packages.props" />
     </Folder>
-    <Project Path="Api/Api.csproj"/>
-    <Project Path="Queryable/Queryable.csproj"/>
+    <Project Path="Queryable/Queryable.csproj" />
 </Solution>
