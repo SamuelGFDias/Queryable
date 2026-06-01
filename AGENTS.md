@@ -1,0 +1,21 @@
+## Diretrizes de Commit e Pull Request
+### Commits semanticos (PT-BR)
+- Use este formato com icone e descricao em Portugues:
+  - `<icone> Qeryable - <categoria>: <descricao>`
+- Nao incluir linha de co-autoria (Co-authored-by) em commits.
+- Categorias aceitas:
+  - `chore` (🧹), `feat` (✨), `bugfix` (🐛), `docs` (📚), `test` (🧪), `build` (⚙️), `ci` (🔧), `deps` (📦), `perf` (🚀), `remove` (🔥), `style` (🎨), `refactor` (♻️)
+- Exemplos:
+  - `🧹 Qeryable - chore: Criar Seeders`
+  - `✨ Qeryable - feat: Cadastro de usuario`
+  - `🐛 Qeryable - bugfix: Resolvendo problema de autenticacao`
+  - `📚 Qeryable - docs: Atualizando guia de usuario`
+  - `🧪 Qeryable - test: Criar testes de integracao para autenticacao`
+  - `⚙️ Qeryable - build: Ajustar pipeline de build`
+  - `🔧 Qeryable - ci: Atualizar workflow de CI`
+  - `📦 Qeryable - deps: Atualizar dependencias do Angular`
+  - `🚀 Qeryable - perf: Melhorar performance da listagem de usuarios`
+  - `🔥 Qeryable - remove: Remover codigo legado de autenticacao`
+  - `🎨 Qeryable - style: Padronizar formatacao do projeto`
+  - `♻️ Qeryable - refactor: Refatorando o servico de localizacao`
+- Pull requests devem incluir uma descricao clara da mudanca e, para atualizacoes de diagramas, um breve resumo do que foi modificado.

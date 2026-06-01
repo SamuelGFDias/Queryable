@@ -1,0 +1,785 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+.gitignore
+.repomixignore
+Directory.Packages.props
+Queryable/Attributes/QueryableAttribute.cs
+Queryable/Builders/FilterBuilder.cs
+Queryable/Builders/SortBuilder.cs
+Queryable/Core/PagedResult.cs
+Queryable/Core/PageMeta.cs
+Queryable/Core/QuerySpec.cs
+Queryable/Core/QuerySpecApplier.cs
+Queryable/Extensions/PaginationExtensions.cs
+Queryable/Extensions/PathExtension.cs
+Queryable/Extensions/QuerySpecModelBinder.cs
+Queryable/Extensions/QuerySpecModelBinderProvider.cs
+Queryable/Interfaces/IFilterBuilder.cs
+Queryable/Interfaces/IQuerySpecApplier.cs
+Queryable/Interfaces/ISortBuilder.cs
+Queryable/Queryable.csproj
+Queryable/README.md
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path=".repomixignore">
+bin/
+obj/
+.vs/
+.vscode/
+packages/
+TestResults/
+*.user
+*.suo
+*.cache
+*.pdb
+
+# Excluir API e solução estendida do pacote
+Api/
+Queryable.slnx
+</file>
+
+<file path=".gitignore">
+bin/
+obj/
+/packages/
+riderModule.iml
+/_ReSharper.Caches/
+**/Migrations/
+*.db*
+**/.idea/
+publish.ps1
+</file>
+
+<file path="Directory.Packages.props">
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Abstractions" Version="2.3.10" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="9.0.4" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.4" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.4" />
+    <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerGen" Version="10.2.1" />
+    <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.2.1" />
+  </ItemGroup>
+</Project>
+</file>
+
+<file path="Queryable/Attributes/QueryableAttribute.cs">
+namespace Queryable.Attributes;
+
+[AttributeUsage(AttributeTargets.Property)]
+public class QueryableAttribute(string? alias = null) : Attribute
+{
+    public string? Alias { get; set; } = alias;
+}
+</file>
+
+<file path="Queryable/Builders/FilterBuilder.cs">
+using System.Linq.Expressions;
+using System.Reflection;
+using Queryable.Extensions;
+using Queryable.Interfaces;
+
+namespace Queryable.Builders
+{
+    public class FilterBuilder : IFilterBuilder
+    {
+        private static readonly string[] SupportedOperators = ["eq", "gt", "lt", "gte", "lte", "contains", "in", "neq"];
+
+        public Expression<Func<T, bool>> BuildPredicate<T>(IDictionary<string, string> queryParams)
+        {
+            ParameterExpression parameter = Expression.Parameter(typeof(T), "x");
+            Expression? finalExpr = null;
+
+            // Mapeia alias para cadeia de propriedades (path)
+            Dictionary<string, List<PropertyInfo>> properties = PathExtension.BuildPropertyPaths<T>();
+
+            foreach (var (rawKey, value) in queryParams)
+            {
+                var (propKey, op) = ParseKey(rawKey);
+
+                if (!properties.TryGetValue(propKey, out List<PropertyInfo>? path))
+                    throw new ArgumentException($"Campo '{propKey}' não é pesquisável.");
+
+                // Constrói MemberExpression encadeado conforme path
+                Expression member = path.Aggregate<PropertyInfo, Expression>(
+                    parameter,
+                    Expression.Property);
+
+                // Propriedade alvo para conversão e tipo
+                PropertyInfo targetProp = path.Last();
+                Expression condition = op switch
+                {
+                    "eq"  => Expression.Equal(member, ConvertValue(value, targetProp)),
+                    "neq" => Expression.NotEqual(member, ConvertValue(value, targetProp)),
+                    "gt"  => Expression.GreaterThan(member, ConvertValue(value, targetProp)),
+                    "lt"  => Expression.LessThan(member, ConvertValue(value, targetProp)),
+                    "gte" => Expression.GreaterThanOrEqual(member, ConvertValue(value, targetProp)),
+                    "lte" => Expression.LessThanOrEqual(member, ConvertValue(value, targetProp)),
+                    "contains" when targetProp.PropertyType == typeof(string)
+                        => Expression.Call(member, nameof(string.Contains), null, ConvertValue(value, targetProp)),
+                    "in" => BuildInExpression(member, value, targetProp),
+                    _    => throw new NotSupportedException($"Operador '{op}' não suportado para {targetProp.Name}")
+                };
+
+                finalExpr = finalExpr == null
+                                ? condition
+                                : Expression.AndAlso(finalExpr, condition);
+            }
+
+            return finalExpr == null
+                       ? x => true
+                       : Expression.Lambda<Func<T, bool>>(finalExpr, parameter);
+        }
+
+
+        private static (string field, string op) ParseKey(string rawKey)
+        {
+            foreach (string op in SupportedOperators.OrderByDescending(o => o.Length))
+            {
+                if (rawKey.EndsWith($"__{op}", StringComparison.OrdinalIgnoreCase))
+                    return (rawKey[..^$"__{op}".Length].ToLowerInvariant(), op);
+            }
+
+            return (rawKey.ToLowerInvariant(), "eq");
+        }
+
+        private static Expression ConvertValue(string value, PropertyInfo property)
+        {
+            Type targetType = property.PropertyType;
+            Type baseType = Nullable.GetUnderlyingType(targetType) ?? targetType;
+
+            if (value.Equals("null", StringComparison.OrdinalIgnoreCase))
+                return Expression.Constant(null, targetType);
+
+            object converted = baseType switch
+            {
+                _ when baseType == typeof(Guid)     => Guid.Parse(value),
+                _ when baseType.IsEnum              => Enum.Parse(baseType, value, true),
+                _ when baseType == typeof(DateOnly) => DateOnly.Parse(value),
+                _ when baseType == typeof(TimeOnly) => TimeOnly.Parse(value),
+                _                                   => Convert.ChangeType(value, baseType)
+            };
+
+            return Expression.Constant(converted, targetType);
+        }
+
+        private static Expression BuildInExpression(Expression member, string csv, PropertyInfo property)
+        {
+            Type itemType = property.PropertyType;
+            object[] convertedValues = csv.Split(',')
+                                          .Select(v => Convert.ChangeType(v.Trim(), itemType))
+                                          .ToArray();
+
+            var typedArray = Array.CreateInstance(itemType, convertedValues.Length);
+            convertedValues.CopyTo(typedArray, 0);
+
+            MethodInfo containsMethod = typeof(Enumerable)
+                                       .GetMethods(BindingFlags.Static | BindingFlags.Public)
+                                       .First(m => m.Name == "Contains" && m.GetParameters().Length == 2)
+                                       .MakeGenericMethod(itemType);
+
+            ConstantExpression arrayExpr = Expression.Constant(
+                typedArray,
+                typeof(IEnumerable<>).MakeGenericType(itemType)
+            );
+
+            return Expression.Call(containsMethod, arrayExpr, member);
+        }
+    }
+}
+</file>
+
+<file path="Queryable/Builders/SortBuilder.cs">
+using System.Linq.Expressions;
+using System.Reflection;
+using Queryable.Extensions;
+using Queryable.Interfaces;
+
+namespace Queryable.Builders;
+
+public class SortBuilder : ISortBuilder
+{
+    public IOrderedQueryable<T> ApplySort<T>(IQueryable<T> query, string? sortFields)
+    {
+        if (string.IsNullOrWhiteSpace(sortFields))
+            return query.OrderBy(x => 0);
+
+        string[] fields = sortFields.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        bool isFirst = true;
+        IOrderedQueryable<T>? orderedQuery = null;
+        ParameterExpression parameter = Expression.Parameter(typeof(T), "x");
+
+        Dictionary<string, List<PropertyInfo>> properties = PathExtension.BuildPropertyPaths<T>();
+
+        foreach (string field in fields)
+        {
+            bool isDescending = field.StartsWith("-");
+            string propertyName = field.TrimStart('-');
+
+            if (!properties.TryGetValue(propertyName, out List<PropertyInfo>? path))
+                throw new ArgumentException($"Campo de ordenação '{propertyName}' não encontrado.");
+
+            Expression member = path.Aggregate<PropertyInfo, Expression>(
+                parameter,
+                Expression.Property);
+
+            PropertyInfo targetProp = path.Last();
+            LambdaExpression lambda = Expression.Lambda(member, parameter);
+
+            string method = isFirst
+                                ? (isDescending ? "OrderByDescending" : "OrderBy")
+                                : (isDescending ? "ThenByDescending" : "ThenBy");
+
+            object? result = typeof(System.Linq.Queryable).GetMethods()
+                                                          .First(m => m.Name == method && m.GetParameters().Length == 2)
+                                                          .MakeGenericMethod(typeof(T), targetProp.PropertyType)
+                                                          .Invoke(
+                                                               null,
+                                                               [isFirst ? query : orderedQuery!, lambda]);
+
+            orderedQuery = (IOrderedQueryable<T>)result!;
+            isFirst = false;
+        }
+
+        return orderedQuery!;
+    }
+}
+</file>
+
+<file path="Queryable/Core/PagedResult.cs">
+namespace Queryable.Core;
+
+public class PagedResult<T>
+{
+    public List<T> Items { get; set; } = [];
+    public PageMeta Meta { get; set; } = new();
+}
+</file>
+
+<file path="Queryable/Core/PageMeta.cs">
+namespace Queryable.Core;
+
+public class PageMeta
+{
+    public int Page { get; init; }
+    public int PageSize { get; init; }
+    public int TotalCount { get; init; }
+    public int TotalPages => PageSize == 0 ? 0 : (int)Math.Ceiling((double)TotalCount / PageSize);
+    public bool HasPrevious => Page > 1;
+    public bool HasNext => Page < TotalPages;
+}
+</file>
+
+<file path="Queryable/Core/QuerySpec.cs">
+namespace Queryable.Core;
+
+public class QuerySpec<T>
+{
+    private int _page = 1;
+    private int _pageSize = 10;
+    public Dictionary<string, string> Filters { get; set; } = new();
+    public string? Sort { get; set; }
+
+    public int Page
+    {
+        get => _page;
+        set => _page = value > 0 ? value : _page;
+    }
+
+    public int PageSize
+    {
+        get => _pageSize;
+        set => _pageSize = value > 0 ? value : _pageSize;
+    }
+
+    public bool SkipTotalCount { get; set; }
+}
+</file>
+
+<file path="Queryable/Core/QuerySpecApplier.cs">
+using System.Linq.Expressions;
+using Queryable.Interfaces;
+
+namespace Queryable.Core;
+
+public class QuerySpecApplier(IFilterBuilder filterBuilder, ISortBuilder sortBuilder) : IQuerySpecApplier
+{
+    public IQueryable<T> Apply<T>(IQueryable<T> query, QuerySpec<T> spec)
+    {
+        Expression<Func<T, bool>> predicate = filterBuilder.BuildPredicate<T>(spec.Filters);
+        IQueryable<T> filtered = query.Where(predicate);
+
+        IOrderedQueryable<T> ordered = sortBuilder.ApplySort(filtered, spec.Sort);
+
+        return ordered;
+    }
+
+    public IQueryable<T> ApplyPaged<T>(IQueryable<T> query, QuerySpec<T> spec) =>
+        query.Skip((spec.Page - 1) * spec.PageSize).Take(spec.PageSize);
+}
+</file>
+
+<file path="Queryable/Extensions/PaginationExtensions.cs">
+using Queryable.Core;
+
+namespace Queryable.Extensions;
+
+public static class PaginationExtensions
+{
+    public static PagedResult<T> ToPagedResult<T>(
+        this List<T> items,
+        int page,
+        int pageSize,
+        int totalCount
+    )
+    {
+        return new PagedResult<T>
+        {
+            Items = items,
+            Meta = new PageMeta()
+            {
+                TotalCount = totalCount,
+                Page = page,
+                PageSize = pageSize,
+            }
+        };
+    }
+}
+</file>
+
+<file path="Queryable/Extensions/PathExtension.cs">
+using System.Reflection;
+using Queryable.Attributes;
+
+namespace Queryable.Extensions;
+
+public static class PathExtension
+{
+    public static Dictionary<string, List<PropertyInfo>> BuildPropertyPaths<T>()
+    {
+        var result = new Dictionary<string, List<PropertyInfo>>(StringComparer.OrdinalIgnoreCase);
+        BuildPathsRecursively(typeof(T), [], "", result);
+        return result;
+    }
+
+    private static void BuildPathsRecursively(
+        Type type,
+        List<PropertyInfo> currentPath,
+        string prefix,
+        Dictionary<string, List<PropertyInfo>> result
+    )
+    {
+        foreach (PropertyInfo prop in type.GetProperties())
+        {
+            var attr = prop.GetCustomAttribute<QueryableAttribute>();
+            if (attr == null)
+                continue;
+
+            // alias desta propriedade
+            string alias = (attr.Alias ?? prop.Name).ToLowerInvariant();
+            // prefix calcula "department", "department.branch", "department.branch.client", ...
+            string fullAlias = string.IsNullOrEmpty(prefix)
+                                   ? alias
+                                   : $"{prefix}.{alias}";
+
+            // novo caminho de propriedades
+            List<PropertyInfo> newPath = currentPath.Append(prop).ToList();
+
+            // adiciona ao dicionário
+            result[fullAlias] = newPath;
+
+            // recursão: se for um tipo de navegação (classe), descer mais um nível
+            // cuidado: evite descer em tipos primitivos ou ciclos
+            if (prop.PropertyType.IsClass
+             && prop.PropertyType != typeof(string))
+            {
+                BuildPathsRecursively(prop.PropertyType, newPath, fullAlias, result);
+            }
+        }
+    }
+}
+</file>
+
+<file path="Queryable/Extensions/QuerySpecModelBinder.cs">
+using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Queryable.Core;
+
+namespace Queryable.Extensions;
+
+public partial class QuerySpecModelBinder<T> : IModelBinder
+{
+    public Task BindModelAsync(ModelBindingContext bindingContext)
+    {
+        IQueryCollection query = bindingContext.HttpContext.Request.Query;
+
+        var spec = new QuerySpec<T>();
+
+        foreach (var (key, value) in query)
+        {
+            if (key.Equals("page", StringComparison.OrdinalIgnoreCase))
+            {
+                spec.Page = int.TryParse(value, out int page) ? page : 1;
+            } else if (key.Equals("pageSize", StringComparison.OrdinalIgnoreCase))
+            {
+                spec.PageSize = int.TryParse(value, out int pageSize) ? pageSize : 10;
+            } else if (key.Equals("sort", StringComparison.OrdinalIgnoreCase))
+            {
+                spec.Sort = value;
+            } else if (key.Equals("skipTotalCount", StringComparison.OrdinalIgnoreCase))
+            {
+                spec.SkipTotalCount = bool.TryParse(value, out bool skip) && skip;
+            } else if (SwaggerFilterRegex().Match(key) is { Success: true } match)
+            {
+                string cleanKey = match.Groups[1].Value;
+                spec.Filters[cleanKey.ToLowerInvariant()] = value!;
+            } else
+            {
+                spec.Filters[key.ToLowerInvariant()] = value!;
+            }
+        }
+
+        bindingContext.Result = ModelBindingResult.Success(spec);
+        return Task.CompletedTask;
+    }
+
+    [GeneratedRegex(@"Filters\[(.*?)\]")]
+    private static partial Regex SwaggerFilterRegex();
+}
+</file>
+
+<file path="Queryable/Extensions/QuerySpecModelBinderProvider.cs">
+using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Queryable.Core;
+
+namespace Queryable.Extensions;
+
+public class QuerySpecModelBinderProvider : IModelBinderProvider
+{
+    public IModelBinder? GetBinder(ModelBinderProviderContext context)
+    {
+        if (!context.Metadata.ModelType.IsGenericType)
+            return null;
+
+        Type genericType = context.Metadata.ModelType.GetGenericTypeDefinition();
+
+        if (genericType == typeof(QuerySpec<>))
+        {
+            Type binderType = typeof(QuerySpecModelBinder<>).MakeGenericType(context.Metadata.ModelType.GetGenericArguments()[0]);
+            return (IModelBinder?)Activator.CreateInstance(binderType);
+        }
+
+        return null;
+    }
+}
+</file>
+
+<file path="Queryable/Interfaces/IFilterBuilder.cs">
+using System.Linq.Expressions;
+
+namespace Queryable.Interfaces;
+
+public interface IFilterBuilder
+{
+    Expression<Func<T, bool>> BuildPredicate<T>(IDictionary<string, string> queryParams);
+}
+</file>
+
+<file path="Queryable/Interfaces/IQuerySpecApplier.cs">
+using Queryable.Core;
+
+namespace Queryable.Interfaces;
+
+public interface IQuerySpecApplier
+{
+    IQueryable<T> Apply<T>(IQueryable<T> query, QuerySpec<T> spec);
+    IQueryable<T> ApplyPaged<T>(IQueryable<T> query, QuerySpec<T> spec);
+}
+</file>
+
+<file path="Queryable/Interfaces/ISortBuilder.cs">
+namespace Queryable.Interfaces;
+
+public interface ISortBuilder
+{
+    IOrderedQueryable<T> ApplySort<T>(IQueryable<T> query, string? sortFields);
+}
+</file>
+
+<file path="Queryable/Queryable.csproj">
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <IsPackable>true</IsPackable>
+    <PackageId>Queryable.DynamicFilter</PackageId>
+    <Title>Queryable.DynamicFilter</Title>
+    <Description>Filtro dinâmico com QueryString para APIs em ASP.NET.</Description>
+    <Authors>samueldias21</Authors>
+    <PackageTags>aspnetcore filters querystring linq expression api efcore</PackageTags>
+    <PackageProjectUrl>https://github.com/SamuelGFDias/Queryable</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/SamuelGFDias/Queryable</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <Version>10.0.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Abstractions" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+    <None Update="LICENSE.txt">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+  </ItemGroup>
+</Project>
+</file>
+
+<file path="Queryable/README.md">
+# Queryable.DynamicFilter
+
+**Filtro dinâmico via query string para ASP.NET Core APIs.**
+Facilite a construção de filtros avançados (`gt`, `in`, `contains`, `null`, etc.), ordenação múltipla e paginação em APIs com suporte a LINQ Expression.
+
+---
+
+## 🚀 Instalação
+
+```bash
+dotnet add package Queryable.DynamicFilter --version 10.0.0
+```
+
+---
+
+## 🧠 O que esse pacote resolve
+
+* ✅ Filtros com operadores como `__eq`, `__gt`, `__in`, `__contains`, etc.
+* ✅ Ordenação com múltiplos campos (ex: `?sort=nome,-preco`)
+* ✅ Paginação com metadados completos (`totalPages`, `hasNext`, etc.)
+* ✅ Compatível com qualquer `IQueryable<T>` (EF Core, Linq2Objects, etc.)
+* ✅ Suporte a **propriedades aninhadas** (ex: `endereco.cidade__eq=São Paulo`)
+* ✅ Encapsulado em classes com responsabilidade única
+
+---
+
+## 🆕 Novidades
+
+1. **Suporte a propriedades aninhadas em filtros**
+
+    * Agora você pode filtrar por campos internos de objetos complexos. Basta usar o separador `.` na query string.
+    * Exemplo: `GET /api/cliente?endereco.cidade__contains=Rio` 
+
+2**Refatoração interna do `QueryBuilder`**
+
+    * Código limpo e modular para processar propriedades aninhadas.
+    * Mais performance na construção de expressões.
+
+---
+
+## 🔍 Exemplos de filtro
+
+```http
+GET /api/produto?preco__gt=10&preco__lt=100
+GET /api/produto?descricao__contains=camisa
+GET /api/produto?status__in=Ativo,Inativo
+GET /api/produto?criado__from=2024-01-01&criado__to=2024-12-31
+GET /api/produto?nome__eq=null
+```
+
+## 🏠 Filtros em propriedades aninhadas
+
+```http
+GET /api/cliente?endereco.cidade__eq=São Paulo
+GET /api/cliente?address.rua__contains=Travessa&address.numero__gt=100
+```
+
+---
+
+## ↕️ Ordenação
+
+```http
+GET /api/produto?sort=nome,-preco
+```
+
+* `nome`: ascendente
+* `-preco`: descendente
+
+---
+
+## 📄 Padrão de resposta
+
+```json
+{
+  "items": [ /* lista de resultados */ ],
+  "meta": {
+    "page": 1,
+    "pageSize": 10,
+    "totalCount": 42,
+    "totalPages": 5,
+    "hasPrevious": false,
+    "hasNext": true
+  }
+}
+```
+
+---
+
+## 🛠️ Como usar
+
+```csharp
+services.AddScoped<IFilterBuilder, FilterBuilder>();
+services.AddScoped<ISortBuilder, SortBuilder>();
+services.AddScoped<IQuerySpecApplier, QuerySpecApplier>();
+
+services.AddControllers(options =>
+{
+    options.ModelBinderProviders.Insert(0, new QuerySpecModelBinderProvider());
+});
+```
+
+---
+
+### Exemplo no repository:
+
+```csharp
+public class ProdutoRepository : IProdutoRepository
+{
+    public IQueryable<Produto> GetQueryable()
+    {
+        return context.Set<Produto>();
+    }
+}
+```
+
+---
+
+### Exemplo no serviço:
+
+```csharp
+public async Task<PagedResult<ProdutoDto>> Buscar(QuerySpec<Produto> spec)
+{
+    IQueryable<Produto> query = repository.GetQueryable();
+    IQueryable<Produto> filtered = querySpecApplier.Apply(query, spec);
+
+    int totalCount = await filtered.CountAsync();
+
+    IQueryable<Produto> paged = querySpecApplier.ApplyPaged(filtered, spec);
+
+    List<ProdutoDto> dto = await paged
+                                .Select(x => (ProdutoDto)x)
+                                .ToListAsync();
+
+    return dto.ToPagedResult(spec.Page, spec.PageSize, totalCount);
+}
+```
+
+> Você pode ou não fazer a [conversão explícita](#definindo-dto-para-produtos) entre a Entidade e a DTO.
+
+---
+
+## 🧩 Anotando propriedades filtráveis
+
+```csharp
+public class Produto
+{
+    [Queryable("nome")]
+    public string? Nome { get; set; }
+
+    [Queryable("preco")]
+    public decimal Preco { get; set; }
+
+    [Queryable("criado")]
+    public DateTime Criado { get; set; }
+
+    // Propriedade aninhada Address
+    [Queryable("address.rua")]
+    public Address Endereco { get; set; }
+}
+```
+
+---
+
+### Definindo DTO para produtos
+
+```csharp
+public class ProdutoDto
+{
+    public string? Descricao { get; init; }
+    public double Preco { get; init; }
+    public DateTime Criacao { get; init; }
+
+    public static explicit operator ProdutoDto(Produto produto)
+    {
+        return new ProdutoDto
+        {
+            Descricao = produto.Descricao,
+            Preco = produto.Preco,
+            Criacao = produto.Criado
+        };
+    }
+}
+```
+
+> O `explicit operator` me permite realizar o casting de `Produto` para `ProdutoDto` no [Service](#exemplo-no-serviço).
+
+---
+
+## 📦 Licença
+
+MIT License © 2025 Samuel G. F. Dias
+</file>
+
+</files>
