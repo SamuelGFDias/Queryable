@@ -22,11 +22,11 @@ public static class PathExtension
         foreach (PropertyInfo prop in type.GetProperties())
         {
             var attr = prop.GetCustomAttribute<QueryableAttribute>();
-            if (attr == null)
-                continue;
+            // if (attr == null)
+            //     continue;
 
             // alias desta propriedade
-            string alias = (attr.Alias ?? prop.Name).ToLowerInvariant();
+            string alias = attr?.Alias?.ToLowerInvariant() ?? prop.Name;
             // prefix calcula "department", "department.branch", "department.branch.client", ...
             string fullAlias = string.IsNullOrEmpty(prefix)
                                    ? alias

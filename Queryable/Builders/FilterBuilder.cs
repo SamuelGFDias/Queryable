@@ -61,7 +61,7 @@ namespace Queryable.Builders
             foreach (string op in SupportedOperators.OrderByDescending(o => o.Length))
             {
                 if (rawKey.EndsWith($"__{op}", StringComparison.OrdinalIgnoreCase))
-                    return (rawKey[..^$"__{op}".Length].ToLowerInvariant(), op);
+                    return (rawKey[..^$"__{op}".Length], op);
             }
 
             return (rawKey.ToLowerInvariant(), "eq");
