@@ -7,4 +7,8 @@
         <Project Path="src/Queryable/Queryable.csproj" />
         <Project Path="src/Queryable.EntityFrameworkCore/Queryable.EntityFrameworkCore.csproj" />
     </Folder>
+    <Folder Name="/tests/">
+        <Project Path="tests/Queryable.Tests/Queryable.Tests.csproj" />
+        <Project Path="tests/Queryable.EntityFrameworkCore.Tests/Queryable.EntityFrameworkCore.Tests.csproj" />
+    </Folder>
 </Solution>
