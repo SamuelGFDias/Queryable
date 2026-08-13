@@ -3,5 +3,7 @@
         <File Path=".gitignore" />
         <File Path="Directory.Packages.props" />
     </Folder>
-    <Project Path="Queryable/Queryable.csproj" />
+    <Folder Name="/src/">
+        <Project Path="src/Queryable/Queryable.csproj" />
+    </Folder>
 </Solution>
