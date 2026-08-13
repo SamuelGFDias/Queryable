@@ -169,4 +169,56 @@ public class RequestQueryExtensionsTests
 
         Assert.Same(filter, spec.Filter);
     }
+
+    [Fact]
+    public void ToQuerySpec_FilterExpressionPreenchida_ChegaAoFilterDoQuerySpec()
+    {
+        var request = new RequestQuery { FilterExpression = "nome=ana" };
+
+        QuerySpec<Produto> spec = request.ToQuerySpec<Produto>();
+
+        var condition = Assert.IsType<FilterCondition>(spec.Filter);
+        Assert.Equal("nome", condition.Field);
+        Assert.Equal("eq", condition.Operator);
+        Assert.Equal("ana", condition.Value);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ToQuerySpec_FilterExpressionNulaVaziaOuEspacos_ResultaEmFilterNulo(string? filterExpression)
+    {
+        var request = new RequestQuery { FilterExpression = filterExpression };
+
+        QuerySpec<Produto> spec = request.ToQuerySpec<Produto>();
+
+        Assert.Null(spec.Filter);
+    }
+
+    [Fact]
+    public void ToQuerySpec_FilterEFilterExpressionPreenchidos_CombinamPorAnd()
+    {
+        var filter = new FilterCondition("ativo", "eq", "true");
+        var request = new RequestQuery { Filter = filter, FilterExpression = "nome=ana" };
+
+        QuerySpec<Produto> spec = request.ToQuerySpec<Produto>();
+
+        var group = Assert.IsType<FilterGroup>(spec.Filter);
+        Assert.Equal(FilterLogic.And, group.Logic);
+        Assert.Equal(2, group.Children.Count);
+        Assert.Same(filter, group.Children[0]);
+
+        var parsed = Assert.IsType<FilterCondition>(group.Children[1]);
+        Assert.Equal("nome", parsed.Field);
+        Assert.Equal("ana", parsed.Value);
+    }
+
+    [Fact]
+    public void ToQuerySpec_FilterExpressionInvalida_PropagaErroDeSintaxeDoParser()
+    {
+        var request = new RequestQuery { FilterExpression = "(nome=ana" };
+
+        Assert.Throws<FilterExpressionSyntaxException>(() => request.ToQuerySpec<Produto>());
+    }
 }
