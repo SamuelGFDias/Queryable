@@ -2,6 +2,7 @@
 using System.Linq.Expressions;
 using System.Reflection;
 using Queryable.Extensions;
+using Queryable.Filtering;
 using Queryable.Interfaces;
 
 namespace Queryable.Builders
@@ -30,49 +31,121 @@ namespace Queryable.Builders
         public Expression<Func<T, bool>> BuildPredicate<T>(IDictionary<string, string> queryParams)
         {
             ParameterExpression parameter = Expression.Parameter(typeof(T), "x");
-            Expression? finalExpr = null;
 
             // Mapeia alias para cadeia de propriedades (path)
             IReadOnlyDictionary<string, List<PropertyInfo>> properties = _pathProvider.GetPaths<T>();
 
-            foreach (var (rawKey, value) in queryParams)
-            {
-                var (propKey, op) = ParseKey(rawKey);
+            FilterNode tree = ToFilterTree(queryParams);
+            Expression body = Compile(tree, parameter, properties);
 
-                if (!properties.TryGetValue(propKey, out List<PropertyInfo>? path))
-                    throw new ArgumentException($"Campo '{propKey}' não é pesquisável.");
-
-                // Constrói MemberExpression encadeado conforme path
-                Expression member = path.Aggregate<PropertyInfo, Expression>(
-                    parameter,
-                    Expression.Property);
-
-                // Propriedade alvo para conversão e tipo
-                PropertyInfo targetProp = path.Last();
-                Expression condition = op switch
-                {
-                    "eq"  => Expression.Equal(member, ConvertValue(value, targetProp)),
-                    "neq" => Expression.NotEqual(member, ConvertValue(value, targetProp)),
-                    "gt"  => Expression.GreaterThan(member, ConvertValue(value, targetProp)),
-                    "lt"  => Expression.LessThan(member, ConvertValue(value, targetProp)),
-                    "gte" => Expression.GreaterThanOrEqual(member, ConvertValue(value, targetProp)),
-                    "lte" => Expression.LessThanOrEqual(member, ConvertValue(value, targetProp)),
-                    "contains" when targetProp.PropertyType == typeof(string)
-                        => Expression.Call(member, nameof(string.Contains), null, ConvertValue(value, targetProp)),
-                    "in" => BuildInExpression(member, value, targetProp),
-                    _    => throw new NotSupportedException($"Operador '{op}' não suportado para {targetProp.Name}")
-                };
-
-                finalExpr = finalExpr == null
-                                ? condition
-                                : Expression.AndAlso(finalExpr, condition);
-            }
-
-            return finalExpr == null
-                       ? x => true
-                       : Expression.Lambda<Func<T, bool>>(finalExpr, parameter);
+            return Expression.Lambda<Func<T, bool>>(body, parameter);
         }
 
+        public Expression<Func<T, bool>> BuildPredicate<T>(FilterNode filter)
+        {
+            ArgumentNullException.ThrowIfNull(filter);
+
+            ParameterExpression parameter = Expression.Parameter(typeof(T), "x");
+            IReadOnlyDictionary<string, List<PropertyInfo>> properties = _pathProvider.GetPaths<T>();
+
+            Expression body = Compile(filter, parameter, properties);
+
+            return Expression.Lambda<Func<T, bool>>(body, parameter);
+        }
+
+        /// <summary>
+        /// Adaptador legado: traduz o dicionário <c>campo__operador=valor</c> em uma árvore
+        /// <see cref="FilterGroup"/> combinada por <see cref="FilterLogic.And"/> — cada entrada
+        /// do dicionário vira uma <see cref="FilterCondition"/> folha. Dicionário vazio produz
+        /// um grupo AND sem filhos, que <see cref="Compile"/> resolve para um predicado sempre
+        /// verdadeiro (mesmo comportamento do código anterior a esta árvore).
+        /// </summary>
+        private static FilterGroup ToFilterTree(IDictionary<string, string> queryParams)
+        {
+            List<FilterNode> children = queryParams
+                .Select(kv =>
+                {
+                    var (field, op) = ParseKey(kv.Key);
+                    return (FilterNode)new FilterCondition(field, op, kv.Value);
+                })
+                .ToList();
+
+            return new FilterGroup(FilterLogic.And, children);
+        }
+
+        /// <summary>
+        /// Compilador recursivo <see cref="FilterNode"/> → <see cref="Expression"/>. Ponto único
+        /// de tradução para os três formatos de entrada (dicionário legado, e futuramente
+        /// mini-linguagem e JSON): todos produzem uma árvore que passa por aqui.
+        /// </summary>
+        private static Expression Compile(
+            FilterNode node,
+            ParameterExpression parameter,
+            IReadOnlyDictionary<string, List<PropertyInfo>> properties)
+        {
+            switch (node)
+            {
+                case FilterCondition condition:
+                    return CompileCondition(condition, parameter, properties);
+
+                case FilterNot not:
+                    return Expression.Not(Compile(not.Inner, parameter, properties));
+
+                case FilterGroup { Logic: FilterLogic.And } group:
+                    // Grupo AND vazio ⇒ predicado sempre verdadeiro (mesmo comportamento do
+                    // dicionário vazio no código anterior a esta árvore).
+                    return group.Children.Count == 0
+                        ? Expression.Constant(true)
+                        : group.Children
+                            .Select(child => Compile(child, parameter, properties))
+                            .Aggregate(Expression.AndAlso);
+
+                case FilterGroup { Logic: FilterLogic.Or } group:
+                    // Grupo OR vazio ⇒ predicado sempre falso: nenhuma condição para ser
+                    // verdadeira em uma disjunção é logicamente falso (elemento neutro de OR).
+                    // Decisão de design da Etapa 2 — a proposta não define isso explicitamente.
+                    return group.Children.Count == 0
+                        ? Expression.Constant(false)
+                        : group.Children
+                            .Select(child => Compile(child, parameter, properties))
+                            .Aggregate(Expression.OrElse);
+
+                default:
+                    throw new NotSupportedException($"Tipo de nó '{node.GetType().Name}' não suportado.");
+            }
+        }
+
+        private static Expression CompileCondition(
+            FilterCondition condition,
+            ParameterExpression parameter,
+            IReadOnlyDictionary<string, List<PropertyInfo>> properties)
+        {
+            if (!properties.TryGetValue(condition.Field, out List<PropertyInfo>? path))
+                throw new ArgumentException($"Campo '{condition.Field}' não é pesquisável.");
+
+            // Constrói MemberExpression encadeado conforme path
+            Expression member = path.Aggregate<PropertyInfo, Expression>(
+                parameter,
+                Expression.Property);
+
+            // Propriedade alvo para conversão e tipo
+            PropertyInfo targetProp = path.Last();
+            string value = condition.Value;
+
+            return condition.Operator switch
+            {
+                "eq"  => Expression.Equal(member, ConvertValue(value, targetProp)),
+                "neq" => Expression.NotEqual(member, ConvertValue(value, targetProp)),
+                "gt"  => Expression.GreaterThan(member, ConvertValue(value, targetProp)),
+                "lt"  => Expression.LessThan(member, ConvertValue(value, targetProp)),
+                "gte" => Expression.GreaterThanOrEqual(member, ConvertValue(value, targetProp)),
+                "lte" => Expression.LessThanOrEqual(member, ConvertValue(value, targetProp)),
+                "contains" when targetProp.PropertyType == typeof(string)
+                    => Expression.Call(member, nameof(string.Contains), null, ConvertValue(value, targetProp)),
+                "in" => BuildInExpression(member, value, targetProp),
+                _    => throw new NotSupportedException($"Operador '{condition.Operator}' não suportado para {targetProp.Name}")
+            };
+        }
 
         private static (string field, string op) ParseKey(string rawKey)
         {
