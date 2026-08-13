@@ -1,4 +1,5 @@
 using Queryable.Core;
+using Queryable.Filtering;
 
 namespace Queryable.Extensions;
 
@@ -15,9 +16,11 @@ public static class RequestQueryExtensions
     /// <summary>
     /// Converte o <see cref="RequestQuery"/> em um <see cref="QuerySpec{T}"/>, copiando
     /// <see cref="RequestQuery.Sort"/>, <see cref="RequestQuery.Page"/>,
-    /// <see cref="RequestQuery.PageSize"/>, <see cref="RequestQuery.SkipTotalCount"/> e
-    /// <see cref="RequestQuery.Filter"/> (copiado como está, sem transformação), e fazendo o
-    /// parsing de <see cref="RequestQuery.QueryFilter"/> para <see cref="QuerySpec{T}.Filters"/>.
+    /// <see cref="RequestQuery.PageSize"/> e <see cref="RequestQuery.SkipTotalCount"/>, fazendo o
+    /// parsing de <see cref="RequestQuery.QueryFilter"/> para <see cref="QuerySpec{T}.Filters"/>,
+    /// e montando <see cref="QuerySpec{T}.Filter"/> a partir de
+    /// <see cref="RequestQuery.Filter"/> e/ou <see cref="RequestQuery.FilterExpression"/> — ver
+    /// regra de combinação abaixo.
     /// </summary>
     /// <remarks>
     /// Regras de parsing de <see cref="RequestQuery.QueryFilter"/>:
@@ -36,9 +39,22 @@ public static class RequestQueryExtensions
     /// </list>
     /// Exemplos válidos de <see cref="RequestQuery.QueryFilter"/>: <c>"nome=João,idade__gt=18"</c>,
     /// <c>"id__in=1,2,3;ativo=true"</c>, <c>"descricao=texto com = dentro"</c>.
+    /// <para>
+    /// <b>Regra de combinação de <see cref="RequestQuery.Filter"/> com
+    /// <see cref="RequestQuery.FilterExpression"/>.</b> <see cref="RequestQuery.FilterExpression"/>
+    /// (<c>null</c>, vazia ou só espaços é tratada como ausente, sem chamar o parser) é
+    /// interpretada por <see cref="FilterExpressionParser.Parse(string)"/>. Se só um dos dois
+    /// (<see cref="RequestQuery.Filter"/> ou o resultado do parse de
+    /// <see cref="RequestQuery.FilterExpression"/>) estiver preenchido, <see cref="QuerySpec{T}.Filter"/>
+    /// recebe esse único valor sem transformação. Se os dois estiverem preenchidos, nunca um
+    /// sobrescreve o outro — eles são combinados em
+    /// <c>FilterGroup(FilterLogic.And, [Filter, filtro-da-expressão])</c>. Se nenhum dos dois
+    /// estiver preenchido, <see cref="QuerySpec{T}.Filter"/> permanece <c>null</c>.
+    /// </para>
     /// </remarks>
     /// <exception cref="ArgumentNullException">Quando <paramref name="request"/> é <c>null</c>.</exception>
     /// <exception cref="ArgumentException">Quando algum item de <see cref="RequestQuery.QueryFilter"/> não tem <c>=</c> ou tem chave vazia.</exception>
+    /// <exception cref="FilterExpressionSyntaxException">Quando <see cref="RequestQuery.FilterExpression"/> está preenchida e tem erro de sintaxe — ver <see cref="FilterExpressionParser"/>.</exception>
     public static QuerySpec<T> ToQuerySpec<T>(this RequestQuery request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -49,12 +65,26 @@ public static class RequestQueryExtensions
             Page = request.Page,
             PageSize = request.PageSize,
             SkipTotalCount = request.SkipTotalCount,
-            Filter = request.Filter
+            Filter = CombineFilters(request.Filter, ParseFilterExpression(request.FilterExpression))
         };
 
         ParseQueryFilter(request.QueryFilter, spec.Filters, nameof(request));
 
         return spec;
+    }
+
+    private static FilterNode? ParseFilterExpression(string? filterExpression) =>
+        string.IsNullOrWhiteSpace(filterExpression) ? null : FilterExpressionParser.Parse(filterExpression);
+
+    private static FilterNode? CombineFilters(FilterNode? filter, FilterNode? filterFromExpression)
+    {
+        if (filter is null)
+            return filterFromExpression;
+
+        if (filterFromExpression is null)
+            return filter;
+
+        return new FilterGroup(FilterLogic.And, [filter, filterFromExpression]);
     }
 
     private static void ParseQueryFilter(string? queryFilter, IDictionary<string, string> filters, string paramName)

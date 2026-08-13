@@ -33,6 +33,18 @@ public class RequestQuery
     public FilterNode? Filter { get; set; }
 
     /// <summary>
+    /// Expressão de filtro composto na mini-linguagem textual (ver
+    /// <see cref="FilterExpressionParser"/>), pensada para uso em GET/query string, onde uma
+    /// árvore JSON seria pouco natural. Ex.:
+    /// <c>"(nome__contains=ana or nome__contains=joao) and ativo=true"</c>. Interpretada por
+    /// <c>ToQuerySpec</c>, que faz o parse e combina o resultado com <see cref="Filter"/> por
+    /// <c>AND</c> quando ambos estiverem preenchidos (nunca um sobrescreve o outro) — ver
+    /// <see cref="Filter"/> para a regra completa de combinação. Valor padrão: <c>null</c>
+    /// (nenhum filtro textual).
+    /// </summary>
+    public string? FilterExpression { get; set; }
+
+    /// <summary>
     /// Campo(s) de ordenação, no mesmo formato aceito por <see cref="QuerySpec{T}.Sort"/>.
     /// Valor padrão: <c>null</c> (sem ordenação).
     /// </summary>
