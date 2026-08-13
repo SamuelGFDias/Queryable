@@ -4,7 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## O que é
 
-`Queryable.DynamicFilter` — biblioteca NuGet (.NET 10) que traduz query string em filtro/ordenação/paginação sobre `IQueryable<T>`, via árvores de expressão. Projeto único em `src/Queryable/`, sem consumidores no repo.
+`Queryable.DynamicFilter` — biblioteca NuGet (.NET 10) que traduz query string em filtro/ordenação/paginação sobre `IQueryable<T>`, via árvores de expressão. O repositório contém dois pacotes empacotáveis:
+
+- **`Queryable.DynamicFilter`** (`src/Queryable/`) — núcleo: query spec, builders de filtro e ordenação, model binder, sem dependência de Entity Framework.
+- **`Queryable.DynamicFilter.EntityFrameworkCore`** (`src/Queryable.EntityFrameworkCore/`) — integração com EF Core: `IPagedQueryService` e `PagedQueryService` para aplicar filtro/ordenação/paginação com projeção em DTO, reusando o núcleo via `ProjectReference`.
+
+Ambos são publicados no NuGet, sem consumidores no repositório.
 
 ## Comandos
 
@@ -12,9 +17,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 dotnet build                                                  # Debug; também gera .nupkg (GeneratePackageOnBuild=true)
 dotnet build -c Release
 dotnet pack src/Queryable/Queryable.csproj -c Release --no-build --output ./artifacts
+dotnet pack src/Queryable.EntityFrameworkCore/Queryable.EntityFrameworkCore.csproj -c Release --no-build --output ./artifacts
 ```
 
-**`dotnet pack` sozinho falha com `NU5026`** (dll não encontrada). `GeneratePackageOnBuild=true` quebra a ordem build→pack padrão, então sempre rode `dotnet build -c Release` antes e passe `--no-build` no pack. O workflow de publicação faz exatamente isso.
+**`dotnet pack` sozinho falha com `NU5026`** (dll não encontrada). `GeneratePackageOnBuild=true` quebra a ordem build→pack padrão, então sempre rode `dotnet build -c Release` antes e passe `--no-build` no pack. Existem agora dois projetos empacotáveis, ambos precisam de `dotnet pack`. O workflow de publicação faz exatamente isso.
 
 Não existe projeto de teste — `dotnet test` não roda nada. Ao alterar `FilterBuilder`/`SortBuilder`/`PathExtension`, valide manualmente: as regressões aqui são silenciosas em compilação e só aparecem como exceção em runtime, na primeira requisição.
 
@@ -39,7 +45,7 @@ query string
 
 Pontos não óbvios do mapeamento:
 
-- **`[Queryable]` é opcional e não restringe nada.** A checagem `if (attr == null) continue;` está comentada em `src/Queryable/Extensions/PathExtension.cs:25-26`. Hoje **toda propriedade pública** é filtrável/ordenável; o atributo só define um *alias*. O `README.md` ainda descreve o comportamento antigo ("use `[Queryable]` para expor campos") e está desatualizado nesse ponto. Se for reintroduzir o opt-in, é ali — e o README precisa acompanhar.
+- **`[Queryable]` é opcional e não restringe nada.** A checagem `if (attr == null) continue;` está comentada em `src/Queryable/Extensions/PathExtension.cs:25-26`. Hoje **toda propriedade pública** é filtrável/ordenável; o atributo só define um *alias*. O `src/Queryable/README.md` documenta isso como superfície de exposição da API. Se for reintroduzir o opt-in, é ali — e o README precisa acompanhar.
 - **Não há proteção contra ciclos.** A recursão desce em toda `prop.PropertyType.IsClass` que não seja `string`. Uma navegação bidirecional de EF (`Produto.Categoria.Produtos`) causa recursão infinita. É a limitação estrutural mais séria da lib.
 - Aliases aninhados usam ponto: `categoria.nome`. Chaves de filtro usam `campo__operador`; sem sufixo, o operador é `eq`.
 
@@ -48,17 +54,35 @@ Outros comportamentos que dependem de ler mais de um arquivo:
 - `Apply` **sempre** ordena — sem `sort`, `SortBuilder` devolve `query.OrderBy(x => 0)`. Isso é o que torna `ApplyPaged` (`Skip`/`Take`) legítimo no provider. Não remova esse fallback.
 - `ApplyPaged` **não** chama `Apply`. O chamador encadeia os dois na ordem `Apply` → `CountAsync` → `ApplyPaged`, porque o total tem que ser contado sobre o conjunto filtrado e não paginado.
 - `QuerySpec.Page`/`PageSize` ignoram atribuições `<= 0` no setter e mantêm o default (1 / 10). Não valide isso de novo na borda.
-- **Conversão de valores diverge entre operadores.** `ConvertValue` trata `Guid`, enums, `DateOnly`/`TimeOnly`, `Nullable<>` e o literal `"null"`; já `BuildInExpression` usa só `Convert.ChangeType`, então `in` quebra para `Guid`/enum — inclusive no exemplo `id__in=<guid>` do README. Se for corrigir, é fazer `in` reusar `ConvertValue`.
+- **Conversão de valores diverge entre operadores.** `ConvertValue` trata `Guid`, enums, `DateOnly`/`TimeOnly`, `Nullable<>` e o literal `"null"`; já `BuildInExpression` usa só `Convert.ChangeType`, então `in` quebra para `Guid`/enum. Se for corrigir, é fazer `in` reusar `ConvertValue`.
 - O binder aceita tanto `?nome=ana` quanto a forma `?Filters[nome]=ana` que o Swagger UI gera (regex `SwaggerFilterRegex`), e normaliza as chaves para minúsculas.
 - `contains` só é aceito em `string`; qualquer outro tipo cai no `_ => throw NotSupportedException`.
+
+### RequestQuery e camada Entity Framework Core
+
+`RequestQuery` (Core/) é um modelo achatado alternativo para requisições que recebem os parâmetros de filtro, ordenação e paginação como campos simples (ex.: corpo de request, DTO de query string única) em vez do formato posicional baseado em dicionário. Converte-se para `QuerySpec<T>` via `RequestQueryExtensions.ToQuerySpec<T>()`, que então é aplicado normalmente pelo núcleo.
+
+Regra crítica de separador em `QueryFilter`: usa `;` quando a string contém esse caractere, senão `,`. Isso evita colisão com o operador `in`, cujo valor é CSV (ex.: `"id__in=1,2,3;ativo=true"`).
+
+`IPagedQueryService` (Queryable.EntityFrameworkCore) fornece `ApplyFilterPaginatedAsync<TEntity, TDto>` em duas sobrecargas:
+- **Com projeção explícita**: `Expression<Func<TEntity, TDto>>` passado pelo chamador.
+- **Com `IProjectable`**: `TDto` implementa `IProjectable<TEntity, TDto>` e expõe a projeção como membro estático; resolve em tempo de compilação, sem reflexão.
+
+Por que `IProjectable` mora no núcleo e não no pacote EF? Porque um assembly de DTOs/Contracts pode declarar a projeção sem referenciar Entity Framework, permitindo compartilhamento com clientes que usam apenas o núcleo.
+
+`PagedQueryService` reutiliza `ApplyPaged` e `ToPagedResult` do núcleo em vez de reimplementar Skip/Take, respeita `SkipTotalCount` (omite `COUNT` quando `true`), e aplica `AsNoTracking` automaticamente.
 
 ### Colisão de namespace
 
 O namespace raiz é `Queryable`, o que sombreia `System.Linq.Queryable`. `SortBuilder.cs` precisa escrever `typeof(System.Linq.Queryable)` por extenso para invocar `OrderBy`/`ThenBy` por reflexão. Espere esse atrito ao mexer em qualquer código que use LINQ por reflexão.
 
+Da mesma forma, no pacote EF Core o namespace `Queryable.EntityFrameworkCore` colide com `Microsoft.EntityFrameworkCore`. `PagedQueryService.cs` usa `using global::Microsoft.EntityFrameworkCore;` para que extensões como `CountAsync`, `ToListAsync` e `AsNoTracking` resolvam corretamente.
+
 ## Publicação no NuGet
 
-`.github/workflows/publish.yml` dispara em tag `v*`: build Release → pack → `NuGet/login@v1` (OIDC, sem secret, user `samueldias21`) → `dotnet nuget push --skip-duplicate`.
+`.github/workflows/publish.yml` dispara em tag `v*`: build Release → pack dos DOIS projetos → `NuGet/login@v1` (OIDC, sem secret, user `samueldias21`) → `dotnet nuget push --skip-duplicate`.
+
+Ambos os pacotes (`Queryable.DynamicFilter` e `Queryable.DynamicFilter.EntityFrameworkCore`) compartilham a mesma versão, derivada da tag, então saem sempre em par.
 
 **A versão vem do MinVer, derivada da tag git** — não existe mais `<Version>` no csproj. Publicar é:
 
