@@ -18,6 +18,10 @@ public class QuerySpecModelBinderTests
         QuerySpecModelBinder<Produto>.BuildSpec(
             pairs.Select(p => new KeyValuePair<string, StringValues>(p.Key, p.Value)));
 
+    private static QuerySpec<Produto> BuildSpec(FilterLimits limits, params (string Key, string Value)[] pairs) =>
+        QuerySpecModelBinder<Produto>.BuildSpec(
+            pairs.Select(p => new KeyValuePair<string, StringValues>(p.Key, p.Value)), limits);
+
     // ---------------------------------------------------------------------------------------
     // page / pageSize / sort / skipTotalCount
     // ---------------------------------------------------------------------------------------
@@ -157,5 +161,64 @@ public class QuerySpecModelBinderTests
 
         Assert.Null(spec.Filter);
         Assert.False(spec.Filters.ContainsKey("filter"));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Etapa 6 — limites de segurança: BuildSpec (o método estático testável) continua
+    // LANÇANDO as exceções; é BindModelAsync (a borda HTTP, não testada aqui por não exigir
+    // infraestrutura ASP.NET Core) quem as converte em erro de modelo/400.
+    // ---------------------------------------------------------------------------------------
+
+    [Fact]
+    public void BuildSpec_Filter_ExcedeMaxNodesPadrao_LancaFilterLimitExceededException_NaoEngole()
+    {
+        string filterExpression = string.Join(
+            " and ",
+            Enumerable.Range(0, FilterLimits.Default.MaxNodes + 1).Select(i => $"campo{i}=x"));
+
+        var ex = Assert.Throws<FilterLimitExceededException>(() => BuildSpec(("filter", filterExpression)));
+
+        Assert.Equal(FilterLimitKind.MaxNodes, ex.Limit);
+    }
+
+    [Fact]
+    public void BuildSpec_Filter_ExcedeMaxExpressionLengthPadrao_LancaFilterLimitExceededException_NaoEngole()
+    {
+        string filterExpression = new string('(', FilterLimits.Default.MaxExpressionLength + 1);
+
+        var ex = Assert.Throws<FilterLimitExceededException>(() => BuildSpec(("filter", filterExpression)));
+
+        Assert.Equal(FilterLimitKind.MaxExpressionLength, ex.Limit);
+    }
+
+    [Fact]
+    public void BuildSpec_Filter_ComExpressaoInvalida_AindaLancaFilterExpressionSyntaxException_NaoEngole()
+    {
+        // Continua provando o mesmo que BuildSpec_Filter_ComExpressaoInvalida_PropagaErroDeSintaxe
+        // já cobria antes da Etapa 6 — reafirmado aqui para deixar explícito, ao lado dos casos
+        // de limite acima, que nenhuma das duas exceções de filtro é engolida por BuildSpec.
+        Assert.Throws<FilterExpressionSyntaxException>(() => BuildSpec(("filter", "nome__contains=")));
+    }
+
+    [Fact]
+    public void BuildSpec_LimitesCustomizados_SaoRespeitadosEmVezDoDefault()
+    {
+        var limitesCustomizados = new FilterLimits { MaxNodes = 1 };
+
+        // "a=1 and b=2" tem 3 nós (1 grupo + 2 condições) — dentro do default (100), mas acima
+        // do limite customizado (1).
+        var ex = Assert.Throws<FilterLimitExceededException>(
+            () => BuildSpec(limitesCustomizados, ("filter", "a=1 and b=2")));
+
+        Assert.Equal(FilterLimitKind.MaxNodes, ex.Limit);
+    }
+
+    [Fact]
+    public void BuildSpec_SemLimitesExplicitos_UsaFilterLimitsDefault()
+    {
+        // Mesma árvore do teste acima, mas sem limites customizados: fica dentro do default.
+        QuerySpec<Produto> spec = BuildSpec(("filter", "a=1 and b=2"));
+
+        Assert.NotNull(spec.Filter);
     }
 }
