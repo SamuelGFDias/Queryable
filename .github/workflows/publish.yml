@@ -1,0 +1,50 @@
+name: Publish to NuGet
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Exigido pela policy de trusted publishing do nuget.org, que valida
+    # o claim "environment: production" no token OIDC.
+    environment: production
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # MinVer precisa do historico completo e das tags para derivar a versao.
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Pack
+        run: |
+          dotnet pack src/Queryable/Queryable.csproj \
+            --configuration Release --no-build \
+            --output "${{ runner.temp }}/packages"
+
+      - name: NuGet login (OIDC → temp API key)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: samueldias21
+
+      - name: Push to NuGet
+        run: |
+          dotnet nuget push "${{ runner.temp }}/packages/*.nupkg" \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key ${{ steps.login.outputs.NUGET_API_KEY }} \
+            --skip-duplicate
