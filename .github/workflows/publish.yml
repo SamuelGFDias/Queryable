@@ -35,6 +35,9 @@ jobs:
           dotnet pack src/Queryable/Queryable.csproj \
             --configuration Release --no-build \
             --output "${{ runner.temp }}/packages"
+          dotnet pack src/Queryable.EntityFrameworkCore/Queryable.EntityFrameworkCore.csproj \
+            --configuration Release --no-build \
+            --output "${{ runner.temp }}/packages"
 
       - name: NuGet login (OIDC → temp API key)
         uses: NuGet/login@v1
