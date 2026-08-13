@@ -25,6 +25,35 @@ public interface IPagedQueryService
     /// o compilador pode não conseguir escolher entre elas. Nesse caso, use o argumento
     /// nomeado <c>afterSpec:</c> para desambiguar.
     /// </para>
+    /// <para>
+    /// <b><paramref name="afterSpec"/> roda depois do filtro/ordenação de <paramref name="request"/>
+    /// e antes da contagem e da paginação</b> — nessa ordem: filtro/ordenação → <paramref name="afterSpec"/>
+    /// → <c>CountAsync</c> → <c>Skip</c>/<c>Take</c>. Qualquer <c>Where</c> aplicado dentro de
+    /// <paramref name="afterSpec"/> também é contado, ou seja, ele afeta
+    /// <see cref="PagedResult{T}.Meta"/>.<c>TotalCount</c>, não só os itens da página.
+    /// </para>
+    /// <para>
+    /// <b>Ordenação aplicada a <paramref name="query"/> antes desta chamada é descartada.</b>
+    /// A ordenação de <paramref name="request"/> é sempre (re)aplicada internamente via
+    /// <c>OrderBy</c> — inclusive quando <see cref="RequestQuery.Sort"/> está vazio, caso em que
+    /// o fallback é <c>OrderBy(x =&gt; 0)</c> — e <c>OrderBy</c> substitui qualquer ordenação
+    /// anterior da <see cref="IQueryable{T}"/> em vez de compor com ela (isso só aconteceria com
+    /// <c>ThenBy</c>). Um <c>query.OrderBy(...)</c> feito pelo chamador antes de passar
+    /// <paramref name="query"/> para este método é, portanto, sempre perdido.
+    /// </para>
+    /// <para>
+    /// Por causa disso, uma ordenação padrão (quando o cliente não pediu <c>sort</c>) precisa
+    /// ser aplicada dentro de <paramref name="afterSpec"/>, nunca em <paramref name="query"/>. E
+    /// precisa ser <b>condicional</b>: um <c>OrderBy</c> incondicional dentro de
+    /// <paramref name="afterSpec"/> também substitui — pelo mesmo motivo — a ordenação que o
+    /// cliente pediu via <see cref="RequestQuery.Sort"/>, silenciosamente. Exemplo do padrão
+    /// correto:
+    /// <code>
+    /// afterSpec: q =&gt; string.IsNullOrWhiteSpace(request.Sort)
+    ///     ? q.OrderByDescending(p =&gt; p.CriadoEm)
+    ///     : q
+    /// </code>
+    /// </para>
     /// </remarks>
     /// <typeparam name="TEntity">Tipo da entidade de origem da consulta.</typeparam>
     /// <typeparam name="TDto">Tipo do DTO de destino da projeção.</typeparam>
@@ -32,8 +61,9 @@ public interface IPagedQueryService
     /// <param name="request">Requisição achatada com filtro, ordenação e paginação.</param>
     /// <param name="projection">Expressão de projeção de <typeparamref name="TEntity"/> para <typeparamref name="TDto"/>.</param>
     /// <param name="afterSpec">
-    /// Transformação opcional aplicada após o filtro/ordenação e antes da paginação
-    /// (ex.: <c>Include</c> adicionais, filtros de segurança não expressáveis via <see cref="QuerySpec{T}"/>).
+    /// Transformação opcional aplicada após o filtro/ordenação e antes da contagem e da
+    /// paginação (ex.: <c>Include</c> adicionais, filtros de segurança não expressáveis via
+    /// <see cref="QuerySpec{T}"/>, ordenação padrão condicional — ver <c>remarks</c>).
     /// </param>
     /// <param name="ct">Token de cancelamento.</param>
     /// <returns>Página de <typeparamref name="TDto"/> com os metadados de paginação.</returns>
@@ -58,6 +88,35 @@ public interface IPagedQueryService
     /// sobrecarga com a mesma aridade (a que recebe <c>projection</c> explícita), o
     /// compilador pode não conseguir escolher entre elas. Nesse caso, use o argumento
     /// nomeado <c>afterSpec:</c> para desambiguar.
+    /// <para>
+    /// <b><paramref name="afterSpec"/> roda depois do filtro/ordenação de <paramref name="request"/>
+    /// e antes da contagem e da paginação</b> — nessa ordem: filtro/ordenação → <paramref name="afterSpec"/>
+    /// → <c>CountAsync</c> → <c>Skip</c>/<c>Take</c>. Qualquer <c>Where</c> aplicado dentro de
+    /// <paramref name="afterSpec"/> também é contado, ou seja, ele afeta
+    /// <see cref="PagedResult{T}.Meta"/>.<c>TotalCount</c>, não só os itens da página.
+    /// </para>
+    /// <para>
+    /// <b>Ordenação aplicada a <paramref name="query"/> antes desta chamada é descartada.</b>
+    /// A ordenação de <paramref name="request"/> é sempre (re)aplicada internamente via
+    /// <c>OrderBy</c> — inclusive quando <see cref="RequestQuery.Sort"/> está vazio, caso em que
+    /// o fallback é <c>OrderBy(x =&gt; 0)</c> — e <c>OrderBy</c> substitui qualquer ordenação
+    /// anterior da <see cref="IQueryable{T}"/> em vez de compor com ela (isso só aconteceria com
+    /// <c>ThenBy</c>). Um <c>query.OrderBy(...)</c> feito pelo chamador antes de passar
+    /// <paramref name="query"/> para este método é, portanto, sempre perdido.
+    /// </para>
+    /// <para>
+    /// Por causa disso, uma ordenação padrão (quando o cliente não pediu <c>sort</c>) precisa
+    /// ser aplicada dentro de <paramref name="afterSpec"/>, nunca em <paramref name="query"/>. E
+    /// precisa ser <b>condicional</b>: um <c>OrderBy</c> incondicional dentro de
+    /// <paramref name="afterSpec"/> também substitui — pelo mesmo motivo — a ordenação que o
+    /// cliente pediu via <see cref="RequestQuery.Sort"/>, silenciosamente. Exemplo do padrão
+    /// correto:
+    /// <code>
+    /// afterSpec: q =&gt; string.IsNullOrWhiteSpace(request.Sort)
+    ///     ? q.OrderByDescending(p =&gt; p.CriadoEm)
+    ///     : q
+    /// </code>
+    /// </para>
     /// </remarks>
     /// <typeparam name="TEntity">Tipo da entidade de origem da consulta.</typeparam>
     /// <typeparam name="TDto">
@@ -67,8 +126,9 @@ public interface IPagedQueryService
     /// <param name="query">Consulta base sobre a entidade.</param>
     /// <param name="request">Requisição achatada com filtro, ordenação e paginação.</param>
     /// <param name="afterSpec">
-    /// Transformação opcional aplicada após o filtro/ordenação e antes da paginação
-    /// (ex.: <c>Include</c> adicionais, filtros de segurança não expressáveis via <see cref="QuerySpec{T}"/>).
+    /// Transformação opcional aplicada após o filtro/ordenação e antes da contagem e da
+    /// paginação (ex.: <c>Include</c> adicionais, filtros de segurança não expressáveis via
+    /// <see cref="QuerySpec{T}"/>, ordenação padrão condicional — ver <c>remarks</c>).
     /// </param>
     /// <param name="ct">Token de cancelamento.</param>
     /// <returns>Página de <typeparamref name="TDto"/> com os metadados de paginação.</returns>
