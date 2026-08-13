@@ -43,21 +43,43 @@ public static class RequestQueryExtensions
     /// <b>Regra de combinação de <see cref="RequestQuery.Filter"/> com
     /// <see cref="RequestQuery.FilterExpression"/>.</b> <see cref="RequestQuery.FilterExpression"/>
     /// (<c>null</c>, vazia ou só espaços é tratada como ausente, sem chamar o parser) é
-    /// interpretada por <see cref="FilterExpressionParser.Parse(string)"/>. Se só um dos dois
-    /// (<see cref="RequestQuery.Filter"/> ou o resultado do parse de
+    /// interpretada por <see cref="FilterExpressionParser.Parse(string,FilterLimits?)"/>. Se só
+    /// um dos dois (<see cref="RequestQuery.Filter"/> ou o resultado do parse de
     /// <see cref="RequestQuery.FilterExpression"/>) estiver preenchido, <see cref="QuerySpec{T}.Filter"/>
     /// recebe esse único valor sem transformação. Se os dois estiverem preenchidos, nunca um
     /// sobrescreve o outro — eles são combinados em
     /// <c>FilterGroup(FilterLogic.And, [Filter, filtro-da-expressão])</c>. Se nenhum dos dois
     /// estiver preenchido, <see cref="QuerySpec{T}.Filter"/> permanece <c>null</c>.
     /// </para>
+    /// <para>
+    /// <b>Limites de segurança.</b> O parse de <see cref="RequestQuery.FilterExpression"/> já
+    /// valida sua própria árvore contra <paramref name="limits"/> (ver
+    /// <see cref="FilterExpressionParser.Parse(string,FilterLimits?)"/>), mas a combinação com
+    /// <see cref="RequestQuery.Filter"/> pode somar nós/profundidade de duas origens e superar um
+    /// teto que nenhuma das duas árvores excedia isoladamente — por isso o resultado final de
+    /// <see cref="QuerySpec{T}.Filter"/> é validado de novo, inteiro, antes de ser devolvido.
+    /// </para>
     /// </remarks>
+    /// <param name="request">O modelo achatado de requisição a converter.</param>
+    /// <param name="limits">
+    /// Tetos de segurança a validar (ver <see cref="FilterLimits"/>). Quando <c>null</c>, usa
+    /// <see cref="FilterLimits.Default"/>.
+    /// </param>
     /// <exception cref="ArgumentNullException">Quando <paramref name="request"/> é <c>null</c>.</exception>
     /// <exception cref="ArgumentException">Quando algum item de <see cref="RequestQuery.QueryFilter"/> não tem <c>=</c> ou tem chave vazia.</exception>
     /// <exception cref="FilterExpressionSyntaxException">Quando <see cref="RequestQuery.FilterExpression"/> está preenchida e tem erro de sintaxe — ver <see cref="FilterExpressionParser"/>.</exception>
-    public static QuerySpec<T> ToQuerySpec<T>(this RequestQuery request)
+    /// <exception cref="FilterLimitExceededException">
+    /// Quando <see cref="RequestQuery.FilterExpression"/> excede
+    /// <see cref="FilterLimits.MaxExpressionLength"/>, ou quando a árvore final de
+    /// <see cref="QuerySpec{T}.Filter"/> (após combinar <see cref="RequestQuery.Filter"/> e o
+    /// resultado do parse de <see cref="RequestQuery.FilterExpression"/>) excede a profundidade,
+    /// o número de nós, ou a quantidade de itens de alguma lista <c>in</c> permitidos.
+    /// </exception>
+    public static QuerySpec<T> ToQuerySpec<T>(this RequestQuery request, FilterLimits? limits = null)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        limits ??= FilterLimits.Default;
 
         var spec = new QuerySpec<T>
         {
@@ -65,16 +87,19 @@ public static class RequestQueryExtensions
             Page = request.Page,
             PageSize = request.PageSize,
             SkipTotalCount = request.SkipTotalCount,
-            Filter = CombineFilters(request.Filter, ParseFilterExpression(request.FilterExpression))
+            Filter = CombineFilters(request.Filter, ParseFilterExpression(request.FilterExpression, limits))
         };
 
         ParseQueryFilter(request.QueryFilter, spec.Filters, nameof(request));
 
+        if (spec.Filter is not null)
+            FilterLimitValidator.Validate(spec.Filter, limits);
+
         return spec;
     }
 
-    private static FilterNode? ParseFilterExpression(string? filterExpression) =>
-        string.IsNullOrWhiteSpace(filterExpression) ? null : FilterExpressionParser.Parse(filterExpression);
+    private static FilterNode? ParseFilterExpression(string? filterExpression, FilterLimits limits) =>
+        string.IsNullOrWhiteSpace(filterExpression) ? null : FilterExpressionParser.Parse(filterExpression, limits);
 
     private static FilterNode? CombineFilters(FilterNode? filter, FilterNode? filterFromExpression)
     {

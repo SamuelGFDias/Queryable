@@ -53,16 +53,47 @@ public static class FilterExpressionParser
     /// Interpreta <paramref name="expression"/> na mini-linguagem e devolve a árvore
     /// <see cref="FilterNode"/> equivalente.
     /// </summary>
+    /// <param name="expression">A expressão na mini-linguagem (ver a gramática na documentação da classe).</param>
+    /// <param name="limits">
+    /// Tetos de segurança a validar (ver <see cref="FilterLimits"/>). Quando <c>null</c>, usa
+    /// <see cref="FilterLimits.Default"/> — este método é estático e não tem acesso ao container
+    /// de DI, então um chamador com acesso a um <see cref="FilterLimits"/> configurado (ex.:
+    /// resolvido via <c>HttpContext.RequestServices</c>) deve passá-lo explicitamente para que a
+    /// configuração customizada valha.
+    /// </param>
+    /// <remarks>
+    /// O tamanho de <paramref name="expression"/> é verificado contra
+    /// <see cref="FilterLimits.MaxExpressionLength"/> <b>antes</b> de tokenizar — uma string
+    /// absurdamente longa é rejeitada por tamanho mesmo que sintaticamente inválida, sem gastar
+    /// tempo de parsing nela. Depois de montada, a árvore resultante é validada por
+    /// <see cref="FilterLimitValidator"/> (profundidade, número de nós, itens de <c>in</c>) antes
+    /// de ser devolvida — nenhuma árvore fora dos tetos chega ao chamador para ser compilada.
+    /// </remarks>
     /// <exception cref="ArgumentNullException">Quando <paramref name="expression"/> é <c>null</c>.</exception>
+    /// <exception cref="FilterLimitExceededException">
+    /// Quando <paramref name="expression"/> excede <see cref="FilterLimits.MaxExpressionLength"/>,
+    /// ou quando a árvore resultante excede a profundidade, o número de nós, ou a quantidade de
+    /// itens de alguma lista <c>in</c> permitidos por <paramref name="limits"/>.
+    /// </exception>
     /// <exception cref="FilterExpressionSyntaxException">
     /// Quando <paramref name="expression"/> é vazia/só espaços, ou tem qualquer erro de sintaxe:
     /// parêntese não fechado, aspas não fechadas, palavra-chave colidindo com valor não citado,
     /// lista do operador <c>in</c> fora de parênteses, item de <c>in</c> com vírgula literal,
     /// token sobrando após o fim da expressão, entre outros.
     /// </exception>
-    public static FilterNode Parse(string expression)
+    public static FilterNode Parse(string expression, FilterLimits? limits = null)
     {
         ArgumentNullException.ThrowIfNull(expression);
+
+        limits ??= FilterLimits.Default;
+
+        if (expression.Length > limits.MaxExpressionLength)
+            throw new FilterLimitExceededException(
+                FilterLimitKind.MaxExpressionLength,
+                expression.Length,
+                limits.MaxExpressionLength,
+                $"Expressão de filtro excede o tamanho máximo permitido: encontrado " +
+                $"{expression.Length} caracteres, permitido {limits.MaxExpressionLength}.");
 
         if (string.IsNullOrWhiteSpace(expression))
             throw new FilterExpressionSyntaxException("Expressão de filtro vazia ou apenas espaços", 1);
@@ -71,6 +102,9 @@ public static class FilterExpressionParser
         var parser = new RecursiveDescentParser(tokens);
         FilterNode result = parser.ParseExpression();
         parser.ExpectEof();
+
+        FilterLimitValidator.Validate(result, limits);
+
         return result;
     }
 

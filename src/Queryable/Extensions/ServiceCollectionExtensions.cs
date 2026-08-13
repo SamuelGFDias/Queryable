@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Queryable.Builders;
 using Queryable.Configuration;
 using Queryable.Core;
+using Queryable.Filtering;
 using Queryable.Interfaces;
 
 namespace Queryable.Extensions;
@@ -45,11 +46,56 @@ public static class ServiceCollectionExtensions
         ObterOuCriarRegistry(services);
         services.TryAddSingleton<IPropertyPathProvider, ReflectionPropertyPathProvider>();
 
+        // FilterLimits também é Singleton pela mesma razão: são tetos de segurança decididos na
+        // inicialização da aplicação, não por requisição. Instância nova e independente de
+        // FilterLimits.Default (o fallback usado por código estático sem acesso a DI, ver a
+        // documentação de FilterLimits.Default) — nunca a mesma referência, para que registrar
+        // aqui não tenha efeito colateral sobre esse fallback.
+        services.TryAddSingleton(new FilterLimits());
+
         services.TryAddScoped<IFilterBuilder, FilterBuilder>();
         services.TryAddScoped<ISortBuilder, SortBuilder>();
         services.TryAddScoped<IQuerySpecApplier, QuerySpecApplier>();
 
         return services;
+    }
+
+    /// <summary>
+    /// Igual a <see cref="AddQueryableDynamicFilter(IServiceCollection)"/>, mas permite
+    /// customizar os tetos de segurança de filtro composto (<see cref="FilterLimits"/> —
+    /// profundidade máxima, número de nós, tamanho da expressão da mini-linguagem, itens de
+    /// <c>in</c>) aplicados por <see cref="Queryable.Filtering.FilterLimitValidator"/> antes da
+    /// compilação de uma árvore de filtro vinda de cliente externo.
+    /// </summary>
+    /// <remarks>
+    /// Registra o <see cref="FilterLimits"/> resultante como <c>Singleton</c>, resolvível por
+    /// <c>QuerySpecModelBinder&lt;T&gt;.BindModelAsync</c> via
+    /// <c>HttpContext.RequestServices</c>. Não afeta <see cref="FilterLimits.Default"/> — código
+    /// estático sem acesso a DI (a porta JSON via <see cref="Queryable.Filtering.FilterNodeJsonConverter"/>,
+    /// ou uma chamada direta a <c>FilterExpressionParser.Parse</c> fora de um binder) continua
+    /// validando contra os defaults, independentemente desta configuração (ver a documentação de
+    /// <see cref="FilterLimits.Default"/>).
+    /// </remarks>
+    /// <param name="services">A coleção de serviços onde os serviços serão registrados.</param>
+    /// <param name="configure">Callback que ajusta os campos de uma <see cref="FilterLimits"/> nova, com os defaults como ponto de partida.</param>
+    /// <returns>A própria <paramref name="services"/>, para permitir encadeamento.</returns>
+    /// <exception cref="ArgumentNullException">Quando <paramref name="services"/> ou <paramref name="configure"/> é <c>null</c>.</exception>
+    public static IServiceCollection AddQueryableDynamicFilter(
+        this IServiceCollection services,
+        Action<FilterLimits> configure)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var limits = new FilterLimits();
+        configure(limits);
+
+        // Registrado antes de delegar para a sobrecarga sem parâmetros: TryAddSingleton não
+        // sobrescreve um descritor já existente para o mesmo ServiceType, então esta instância
+        // customizada vence a instância padrão que a sobrecarga abaixo tentaria registrar.
+        services.TryAddSingleton(limits);
+
+        return AddQueryableDynamicFilter(services);
     }
 
     /// <summary>

@@ -18,12 +18,40 @@ namespace Queryable.Filtering;
 /// raiz que já é uma condição folha (<c>{ "field": ..., "value": ... }</c>, sem <c>logic</c>) é
 /// aceito diretamente — não é obrigatório embrulhá-lo em um grupo.
 /// </summary>
+/// <remarks>
+/// <b>Limites de segurança.</b> Depois de montar a árvore completa, <see cref="Read"/> valida o
+/// resultado com <see cref="FilterLimitValidator"/> (<see cref="FilterLimits.MaxDepth"/>,
+/// <see cref="FilterLimits.MaxNodes"/>, <see cref="FilterLimits.MaxInItems"/>) antes de devolvê-la
+/// ao chamador — nenhuma árvore fora dos tetos chega a ser compilada para
+/// <see cref="System.Linq.Expressions.Expression"/>. Este conversor é o ponto de validação
+/// escolhido para a porta JSON porque é o único lugar que garante cobertura de <b>todo</b> valor
+/// de tipo <see cref="FilterNode"/> desserializado pelo <c>System.Text.Json</c> — a anotação
+/// <c>[JsonConverter(typeof(FilterNodeJsonConverter))]</c> está no próprio tipo
+/// <see cref="FilterNode"/>, então ela vale tanto para <c>QuerySpec&lt;T&gt;.Filter</c> quanto
+/// para <c>RequestQuery.Filter</c> (e qualquer outro DTO que venha a expor uma propriedade
+/// <see cref="FilterNode"/>), independentemente de qual ponto de entrada HTTP populou o DTO —
+/// diferente de validar só em <c>QuerySpecModelBinder&lt;T&gt;.BuildSpec</c> ou
+/// <c>RequestQueryExtensions.ToQuerySpec</c>, que não cobririam um <c>[FromBody] QuerySpec&lt;T&gt;</c>
+/// desserializado diretamente pelo model binder de JSON do ASP.NET Core, sem passar por nenhum
+/// dos dois.
+/// <para>
+/// <b>Limitação conhecida e deliberada:</b> <see cref="JsonConverter{T}"/> não recebe
+/// <see cref="IServiceProvider"/> do <c>System.Text.Json</c>, então esta validação sempre usa
+/// <see cref="FilterLimits.Default"/> — os limites configurados via
+/// <c>AddQueryableDynamicFilter(Action&lt;FilterLimits&gt;)</c> no container de DI não chegam
+/// até aqui. Ver a documentação de <see cref="FilterLimits.Default"/>.
+/// </para>
+/// </remarks>
 public sealed class FilterNodeJsonConverter : JsonConverter<FilterNode>
 {
     public override FilterNode Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         using JsonDocument document = JsonDocument.ParseValue(ref reader);
-        return ReadNode(document.RootElement);
+        FilterNode node = ReadNode(document.RootElement);
+
+        FilterLimitValidator.Validate(node);
+
+        return node;
     }
 
     public override void Write(Utf8JsonWriter writer, FilterNode value, JsonSerializerOptions options)
