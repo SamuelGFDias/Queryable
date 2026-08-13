@@ -15,9 +15,9 @@ public static class RequestQueryExtensions
     /// <summary>
     /// Converte o <see cref="RequestQuery"/> em um <see cref="QuerySpec{T}"/>, copiando
     /// <see cref="RequestQuery.Sort"/>, <see cref="RequestQuery.Page"/>,
-    /// <see cref="RequestQuery.PageSize"/> e <see cref="RequestQuery.SkipTotalCount"/>,
-    /// e fazendo o parsing de <see cref="RequestQuery.QueryFilter"/> para
-    /// <see cref="QuerySpec{T}.Filters"/>.
+    /// <see cref="RequestQuery.PageSize"/>, <see cref="RequestQuery.SkipTotalCount"/> e
+    /// <see cref="RequestQuery.Filter"/> (copiado como está, sem transformação), e fazendo o
+    /// parsing de <see cref="RequestQuery.QueryFilter"/> para <see cref="QuerySpec{T}.Filters"/>.
     /// </summary>
     /// <remarks>
     /// Regras de parsing de <see cref="RequestQuery.QueryFilter"/>:
@@ -48,7 +48,8 @@ public static class RequestQueryExtensions
             Sort = request.Sort,
             Page = request.Page,
             PageSize = request.PageSize,
-            SkipTotalCount = request.SkipTotalCount
+            SkipTotalCount = request.SkipTotalCount,
+            Filter = request.Filter
         };
 
         ParseQueryFilter(request.QueryFilter, spec.Filters, nameof(request));

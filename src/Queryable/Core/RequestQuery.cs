@@ -1,3 +1,5 @@
+using Queryable.Filtering;
+
 namespace Queryable.Core;
 
 /// <summary>
@@ -20,6 +22,15 @@ public class RequestQuery
     /// Valor padrão: <c>null</c> (nenhum filtro).
     /// </summary>
     public string? QueryFilter { get; set; }
+
+    /// <summary>
+    /// Árvore de filtro composto opcional (OR, agrupamento, NOT), tipicamente populada a partir
+    /// de um corpo JSON via <see cref="FilterNodeJsonConverter"/>. Copiada para
+    /// <see cref="QuerySpec{T}.Filter"/> por <c>ToQuerySpec</c>. Combina-se com
+    /// <see cref="QueryFilter"/> por <c>AND</c> quando ambos estiverem preenchidos — ver
+    /// <see cref="QuerySpec{T}.Filter"/> para a regra completa. Valor padrão: <c>null</c>.
+    /// </summary>
+    public FilterNode? Filter { get; set; }
 
     /// <summary>
     /// Campo(s) de ordenação, no mesmo formato aceito por <see cref="QuerySpec{T}.Sort"/>.

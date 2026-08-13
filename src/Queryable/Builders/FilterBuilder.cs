@@ -54,6 +54,31 @@ namespace Queryable.Builders
         }
 
         /// <summary>
+        /// Combina o dicionário legado com uma árvore de filtro composto opcional. Quando
+        /// <paramref name="filter"/> é <c>null</c>, delega para
+        /// <see cref="BuildPredicate{T}(IDictionary{string,string})"/> (comportamento idêntico ao
+        /// atual). Quando preenchido, envolve os dois em
+        /// <c>FilterGroup(And, [adaptador(queryParams), filter])</c> antes de compilar — os dois
+        /// conjuntos de condições se combinam por <c>AND</c>, nunca um sobrescreve o outro. O
+        /// adaptador do dicionário legado produz um grupo AND vazio quando <paramref name="queryParams"/>
+        /// está vazio, que compila para um predicado sempre verdadeiro — logo o AND com ele é
+        /// inofensivo.
+        /// </summary>
+        public Expression<Func<T, bool>> BuildPredicate<T>(IDictionary<string, string> queryParams, FilterNode? filter)
+        {
+            if (filter is null)
+                return BuildPredicate<T>(queryParams);
+
+            ParameterExpression parameter = Expression.Parameter(typeof(T), "x");
+            IReadOnlyDictionary<string, List<PropertyInfo>> properties = _pathProvider.GetPaths<T>();
+
+            FilterNode tree = new FilterGroup(FilterLogic.And, [ToFilterTree(queryParams), filter]);
+            Expression body = Compile(tree, parameter, properties);
+
+            return Expression.Lambda<Func<T, bool>>(body, parameter);
+        }
+
+        /// <summary>
         /// Adaptador legado: traduz o dicionário <c>campo__operador=valor</c> em uma árvore
         /// <see cref="FilterGroup"/> combinada por <see cref="FilterLogic.And"/> — cada entrada
         /// do dicionário vira uma <see cref="FilterCondition"/> folha. Dicionário vazio produz

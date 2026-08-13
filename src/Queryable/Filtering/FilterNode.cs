@@ -1,11 +1,21 @@
+using System.Text.Json.Serialization;
+
 namespace Queryable.Filtering;
 
 /// <summary>
 /// Nó da árvore de filtro composto. Representação intermediária única entre as portas de
-/// entrada (hoje só o dicionário legado <c>Dictionary&lt;string,string&gt;</c>; no futuro, mini-
-/// linguagem e JSON) e o compilador que produz a <see cref="System.Linq.Expressions.Expression"/>
-/// final consumida por <see cref="Queryable.Builders.FilterBuilder"/>.
+/// entrada (dicionário legado <c>Dictionary&lt;string,string&gt;</c>, a porta JSON via
+/// <see cref="FilterNodeJsonConverter"/> e, no futuro, a mini-linguagem de query string) e o
+/// compilador que produz a <see cref="System.Linq.Expressions.Expression"/> final consumida por
+/// <see cref="Queryable.Builders.FilterBuilder"/>.
 /// </summary>
+/// <remarks>
+/// Anotado com <see cref="JsonConverterAttribute"/> apontando para
+/// <see cref="FilterNodeJsonConverter"/> para que a desserialização polimórfica funcione sem
+/// exigir registro manual do conversor em <see cref="System.Text.Json.JsonSerializerOptions"/>
+/// do chamador.
+/// </remarks>
+[JsonConverter(typeof(FilterNodeJsonConverter))]
 public abstract record FilterNode;
 
 /// <summary>
