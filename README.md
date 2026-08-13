@@ -452,7 +452,64 @@ public class ProdutosController(AppDbContext context, IPagedQueryService pagedQu
 
 **Regra de combinação com `Filters`/`QueryFilter`:** se `Filter` for nulo, nada muda — só o dicionário (`Filters`) é considerado, exatamente como antes desta funcionalidade existir. Se os dois vierem preenchidos ao mesmo tempo, o predicado final é o `AND` dos dois conjuntos de condições (`AND(Filters, Filter)`) — um nunca sobrescreve o outro. Isso é resolvido por `IFilterBuilder.BuildPredicate<T>(IDictionary<string, string>, FilterNode?)`, chamado internamente por `QuerySpecApplier.Apply`.
 
-> A combinação por `OR`/agrupamento/`NOT` só existe para quem envia a árvore via `Filter`. Pela query string tradicional (`campo__operador=valor`) e por `QueryFilter`, a combinação continua sendo exclusivamente por `AND` — uma mini-linguagem para expressar `OR`/`NOT` na própria query string é etapa futura, ainda não implementada.
+> A combinação por `OR`/agrupamento/`NOT` via `Filter` funciona tanto vindo do corpo JSON quanto vindo da mini-linguagem textual (seção seguinte) — as duas alimentam a mesma árvore. Só a query string tradicional (`campo__operador=valor`, que popula `QuerySpec<T>.Filters`) e `QueryFilter` continuam sendo exclusivamente `AND`; quem precisa de `OR`/agrupamento/`NOT` direto na query string usa o parâmetro `filter=`, descrito a seguir.
+
+## Filtros compostos na query string (mini-linguagem)
+
+A porta JSON acima resolve `OR`/agrupamento/`NOT` para quem monta o filtro programaticamente ou consegue enviar corpo de requisição, mas não ajuda quem só tem `GET` disponível. Para isso existe uma mini-linguagem textual pensada para caber num único parâmetro de query string — parênteses, `and`, `or` e `not` direto na URL, sem POST com corpo JSON.
+
+O parâmetro reconhecido é **`filter`** na query string (`QuerySpecModelBinder<T>.BuildSpec` tem um ramo dedicado para ele — nunca cai no fallback que popula `Filters`). Em `RequestQuery`, a propriedade equivalente é **`FilterExpression`** (`string?`). Nos dois casos, o texto é interpretado por `FilterExpressionParser.Parse(string)` (`Queryable.Filtering`) e produz a mesma árvore `FilterNode` que a porta JSON gera — passa pelo mesmo compilador `FilterNode → Expression`, sem caminho de compilação separado.
+
+```text
+expr       := orExpr
+orExpr     := andExpr ( "or" andExpr )*
+andExpr    := unary ( "and" unary )*
+unary      := "not"? primary
+primary    := "(" expr ")" | comparison
+comparison := field ( "__" operator )? "=" value
+```
+
+Precedência: `not` liga mais forte que `and`, que liga mais forte que `or` — `a or b and c` equivale a `a or (b and c)`, e `not a and b` equivale a `(not a) and b`. Parênteses sobrepõem qualquer precedência.
+
+`and`, `or` e `not` são case-insensitive (`AND`, `And`, `and` são equivalentes) e só contam como palavra-chave quando aparecem como **token isolado fora de aspas** — nunca como substring de um valor não citado. Sem sufixo `__operador` na chave, o operador é `eq`, com os mesmos operadores já documentados em [Sintaxe da query string](#sintaxe-da-query-string).
+
+### Regra de aspas (onde a maioria erra)
+
+Um valor precisa vir entre aspas duplas sempre que contiver espaço, `(`, `)`, `,`, `=`, ou for igual — ignorando maiúsculas/minúsculas — a `and`/`or`/`not`. Dentro de aspas, `\"` é aspa literal e `\\` é barra invertida literal; nenhum outro escape é suportado. Fora de aspas não existe escape: o valor termina no primeiro espaço, `)`, `,` ou fim da string, e aspas abertas e não fechadas antes do fim da expressão são erro de sintaxe.
+
+### Operador `in`
+
+`in` exige uma lista entre parênteses: `id__in=(1,2,3)`. Isso resolve de vez a ambiguidade que existe em `RequestQuery.QueryFilter` (seção acima), onde a vírgula é ao mesmo tempo separador de pares `campo=valor` e separador de itens de `in`, obrigando a trocar o separador de pares para `;`. Cada item da lista segue a mesma regra de aspas de um valor simples: `tag__in=("a b",c)`.
+
+> **Limitação conhecida:** um item de `in` cujo conteúdo resolvido contém uma vírgula literal (só possível quando o item veio entre aspas, ex.: `tag__in=("a, b",c)`) ainda não é suportado — o parser rejeita com um erro claro em vez de gerar um filtro `in` silenciosamente errado (a vírgula ficaria ambígua no CSV que o operador `in` usa internamente).
+
+### Exemplos
+
+| Expressão | Válida? | Por quê |
+| --- | --- | --- |
+| `nome=joao` | sim | equivale a `nome__eq=joao` |
+| `nome__contains=jo and ativo=true` | sim | duas condições combinadas por `AND` |
+| `(nome__contains=ana or nome__contains=joao) and ativo=true` | sim | `OR` interno agrupado, `AND` externo |
+| `not ativo=false` | sim | negação de uma condição simples |
+| `id__in=(1,2,3)` | sim | lista sem ambiguidade de separador |
+| `tag__in=("a b",c)` | sim | item entre aspas sem vírgula literal — item único |
+| `nome="and joão"` | sim | valor que colide com palavra-chave, escapado com aspas |
+| `nome=and joão` | **não** | `and` fora de aspas é lido como palavra-chave, quebra o parse |
+| `nome=joão silva` | **não** | espaço fora de aspas termina o valor antes do esperado |
+| `(nome=ana` | **não** | parêntese não fechado |
+| `nome="joão` | **não** | aspas não fechadas |
+| `id__in=1,2,3` | **não** | lista de `in` fora de parênteses — ambígua com separador de campos |
+| `tag__in=("a, b",c)` | **não** | item de `in` com vírgula literal dentro das aspas — ver limitação acima |
+
+```http
+GET /api/produtos?filter=(nome__contains=ana or nome__contains=joao) and ativo=true
+GET /api/produtos?filter=not ativo=false
+GET /api/produtos?filter=id__in=(1,2,3)
+```
+
+Qualquer erro de sintaxe (parêntese ou aspas não fechados, palavra-chave sem aspas em posição de valor, `in` fora de parênteses, item de `in` com vírgula literal, token sobrando no fim da expressão etc.) lança `FilterExpressionSyntaxException` — especialização de `ArgumentException`, com a propriedade `Position` (1-based, posição aproximada do erro na string de entrada). Assim como um campo de filtro/ordenação desconhecido (ver [Limitações e armadilhas conhecidas](#limitações-e-armadilhas-conhecidas)), sem um middleware de exceção essa exceção não tratada vira 500 no cliente em vez de 400.
+
+**Combinação com a árvore JSON:** em `RequestQuery`, `Filter` (árvore JSON) e `FilterExpression` (mini-linguagem) podem ser preenchidos ao mesmo tempo. Se só um dos dois vier preenchido, `QuerySpec<T>.Filter` recebe esse valor sem alteração; se os dois vierem preenchidos, o predicado final é o `AND` dos dois — `FilterGroup(FilterLogic.And, [Filter, filtro-da-expressão])`, nunca um sobrescreve o outro. `RequestQueryExtensions.ToQuerySpec<T>()` faz essa combinação.
 
 ## Limitações e armadilhas conhecidas
 
