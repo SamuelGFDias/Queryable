@@ -45,7 +45,7 @@ query string
 
 Pontos não óbvios do mapeamento:
 
-- **`[Queryable]` é opcional e não restringe nada.** A checagem `if (attr == null) continue;` está comentada em `src/Queryable/Extensions/PathExtension.cs:25-26`. Hoje **toda propriedade pública** é filtrável/ordenável; o atributo só define um *alias*. O `src/Queryable/README.md` documenta isso como superfície de exposição da API. Se for reintroduzir o opt-in, é ali — e o README precisa acompanhar.
+- **`[Queryable]` é opcional e não restringe nada, por padrão.** A checagem `if (attr == null) continue;` está comentada em `src/Queryable/Extensions/PathExtension.cs:25-26`. Toda propriedade pública é filtrável/ordenável a menos que uma `QueryableConfiguration<TEntity>` chame `OnlyMapped()` para aquele tipo (ver "Configuração fluent" abaixo) — o `README.md` documenta isso como superfície de exposição da API e aponta para a seção de configuração fluent como forma de restringir.
 - **Há três guardas contra ciclo/explosão na recursão.** (1) guarda de coleção: propriedade cujo tipo implementa `IEnumerable` (e não é `string`) entra no mapa de aliases, mas a recursão não desce nela — elimina o vetor clássico de recursão infinita em navegação bidirecional de EF (`Produto.Categoria`/`Categoria.Produtos`) e os aliases lixo de `List<T>` (`.capacity`, `.count`, `.item`); (2) guarda de ciclo por caminho: um tipo já presente no caminho atual não é reentrado — **de propósito é por caminho, não global**, porque uma guarda global quebraria ramos irmãos do mesmo tipo (ex.: `Pedido.EnderecoEntrega` e `Pedido.EnderecoCobranca`, ambos `Endereco`, que precisam continuar os dois mapeados); (3) `MaxDepth = 5`, rede de segurança extra independente das outras duas.
 - Aliases aninhados usam ponto: `categoria.nome`. Chaves de filtro usam `campo__operador`; sem sufixo, o operador é `eq`.
 
@@ -57,6 +57,21 @@ Outros comportamentos que dependem de ler mais de um arquivo:
 - **Conversão de valores é única e compartilhada entre operadores.** `ConvertScalar` (privado, em `FilterBuilder.cs`) trata `Guid`, enums, `DateOnly`/`TimeOnly`, `Nullable<>` e o literal `"null"`, e é chamado tanto por `ConvertValue` (operadores escalares) quanto por `BuildInExpression` (`in`). Essa unificação existe justamente para as duas rotinas não voltarem a divergir — ao mexer em conversão de valor, mexa em `ConvertScalar`, nunca duplique lógica em um dos dois chamadores.
 - O binder aceita tanto `?nome=ana` quanto a forma `?Filters[nome]=ana` que o Swagger UI gera (regex `SwaggerFilterRegex`), e normaliza as chaves para minúsculas.
 - `contains` só é aceito em `string`; qualquer outro tipo cai no `_ => throw NotSupportedException`.
+
+### Configuração fluent
+
+`QueryableConfiguration<TEntity>` (base abstrata, com `For(...)`/`Ignore(...)`/`OnlyMapped()`), `QueryablePropertyBuilder<TEntity>` (retornado por `For`, expõe `As(alias)`) e `QueryableConfigurationRegistry` moram em `src/Queryable/Configuration/`. A configuração entra no pipeline pelo `IPropertyPathProvider` (o ponto de extensão criado na Etapa 1): `ReflectionPropertyPathProvider` (`src/Queryable/Extensions/ReflectionPropertyPathProvider.cs`) é quem consulta o registry e compõe o mapa final por tipo, não `QueryableConfiguration<TEntity>`.
+
+**Ordem de composição em `ReflectionPropertyPathProvider.BuildFinalMap<T>`** (comportamento não óbvio):
+
+1. Mapa automático por reflexão (`PathExtension.BuildPropertyPaths<T>`), como sempre.
+2. Remove as entradas correspondentes a `Ignore(...)`.
+3. Aplica os aliases configurados (`For(...).As(...)`), sobrescrevendo os automáticos de mesmo nome — mas sem remover o alias automático aninhado, que continua resolvendo em paralelo (decisão de produto: permite migrar o alias no frontend sem quebrar o contrato HTTP num único deploy).
+4. Se `OnlyMapped()` foi chamado para o tipo, descarta tudo que não veio do passo 3.
+
+A remoção de `Ignore(...)` (`RemoverCaminhosIgnorados`/`CaminhoEquivalente` em `ReflectionPropertyPathProvider.cs`) compara **estruturalmente pela cadeia de `PropertyInfo`** (`DeclaringType` + `Name` de cada segmento), não pelo texto do alias — comparar por string falharia para propriedades que têm alias diferente via `[Queryable("...")]`.
+
+`QueryableConfigurationRegistry` é `Singleton` no DI (registrado por `ServiceCollectionExtensions.AddQueryableDynamicFilter`/`AddQueryableConfiguration`/`AddQueryableConfigurationsFromAssembly`, todos encadeáveis entre si em qualquer ordem — os três compartilham a mesma instância via `ObterOuCriarRegistry`), pela mesma razão do provider: configuração e cache são de aplicação, decididos na inicialização, não por requisição. `Register`/`RegistrarFonte` **não são idempotentes**: chamar de novo para o mesmo `TEntity` substitui a configuração anterior (last-write-wins), diferente de `AddQueryableDynamicFilter`, que usa `TryAddSingleton`/`TryAddScoped`. Consequência prática: registre a configuração fluente **antes** do primeiro uso de `IPropertyPathProvider`/`IFilterBuilder`/`ISortBuilder` — o mapa é cacheado por `Type` na primeira resolução (`ConcurrentDictionary.GetOrAdd`), então configurar um tipo depois de já ter sido consultado não tem efeito.
 
 ### RequestQuery e camada Entity Framework Core
 

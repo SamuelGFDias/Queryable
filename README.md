@@ -88,7 +88,7 @@ GET /api/produtos?skipTotalCount=true
 
 > **`[Queryable]` não restringe nada.** Hoje, toda propriedade pública do tipo — e de qualquer tipo referenciado por navegação — é filtrável e ordenável por padrão. O atributo serve **apenas** para definir um alias diferente do nome da propriedade em C#.
 
-Isso é implementado em `PathExtension.BuildPropertyPaths<T>` (pacote núcleo): o método varre `type.GetProperties()` e monta o mapa de aliases para todas as propriedades encontradas — a checagem que excluiria propriedades sem `[Queryable]` está comentada no código-fonte atual. Ou seja: se `Produto` tem uma propriedade pública `SaldoDeCaixa` sem `[Queryable]`, ela é filtrável via `?saldoDeCaixa__gt=1000` de qualquer forma. Trate isso como superfície de exposição da API: qualquer propriedade pública de `TEntity` (e de suas navegações, recursivamente) pode ser consultada e ordenada por quem chama o endpoint, com ou sem o atributo.
+Isso é implementado em `PathExtension.BuildPropertyPaths<T>` (pacote núcleo): o método varre `type.GetProperties()` e monta o mapa de aliases para todas as propriedades encontradas — a checagem que excluiria propriedades sem `[Queryable]` está comentada no código-fonte atual. Ou seja: se `Produto` tem uma propriedade pública `SaldoDeCaixa` sem `[Queryable]`, ela é filtrável via `?saldoDeCaixa__gt=1000` de qualquer forma. Trate isso como superfície de exposição da API: qualquer propriedade pública de `TEntity` (e de suas navegações, recursivamente) pode ser consultada e ordenada por quem chama o endpoint, com ou sem o atributo. Para restringir isso — por exemplo, para impedir que uma propriedade sensível como `SenhaHash` seja consultável — veja a seção [Configuração fluent](#configuração-fluent) abaixo.
 
 ```csharp
 using Queryable.Attributes;
@@ -120,6 +120,66 @@ public class Categoria
 ```
 
 Aqui, `Preco` só é alcançável pelo alias `valor` (`valor__gte=100`) — sem o atributo ainda seria alcançável como `preco__gte=100`, mas com o alias definido o nome de exposição passa a ser o do alias. Todas as demais propriedades (`Nome`, `Ativo`, `CriadoEm`, `CategoriaId`, `Categoria.Nome`, `Categoria.Id`) são pesquisáveis pelo próprio nome, sem precisar de anotação — a correspondência é case-insensitive.
+
+## Configuração fluent
+
+Anotar a entidade de domínio com `[Queryable]` obriga o projeto de Domínio a referenciar o pacote `Queryable.DynamicFilter` só para declarar um alias — inverte a direção de dependência que uma Clean/Onion Architecture normalmente exige (Domínio não deveria depender de nada). A configuração fluent resolve isso: os aliases são declarados numa classe fora do Domínio (tipicamente perto da API ou da Infra), derivada de `QueryableConfiguration<TEntity>`.
+
+```csharp
+using Queryable.Configuration;
+
+public class ProdutoQueryConfiguration : QueryableConfiguration<Produto>
+{
+    public ProdutoQueryConfiguration()
+    {
+        // Colapsa um caminho aninhado num alias plano — "categoria" resolve para Categoria.Nome.
+        For(p => p.Categoria.Nome).As("categoria");
+
+        // Sem As(...), o caminho fica registrado sob o alias padrão (nomes das propriedades
+        // em minúsculo, separados por ponto) — equivalente a For(p => p.Ativo).As("ativo").
+        For(p => p.Ativo);
+
+        // Remove do mapa o alias automático correspondente a este caminho.
+        Ignore(p => p.CriadoEm);
+
+        // Opt-in: a partir daqui, só os aliases declarados com For(...) acima continuam
+        // consultáveis para Produto — tudo o mais que a reflexão mapearia automaticamente
+        // (incluindo CategoriaId, Categoria.Id etc.) deixa de existir no mapa.
+        OnlyMapped();
+    }
+}
+```
+
+As chamadas a `For(...)`, `Ignore(...)` e `OnlyMapped()` devem ocorrer no construtor da classe derivada — a configuração roda uma única vez, na inicialização da aplicação.
+
+### Registro no DI
+
+```csharp
+using Queryable.Extensions;
+
+builder.Services.AddQueryableDynamicFilter();
+builder.Services.AddQueryableConfiguration<ProdutoQueryConfiguration>();
+
+// Ou, para registrar todas as configurações de um assembly de uma vez:
+builder.Services.AddQueryableConfigurationsFromAssembly(typeof(ProdutoQueryConfiguration).Assembly);
+```
+
+`AddQueryableConfiguration<TConfiguration>` e `AddQueryableConfigurationsFromAssembly` são encadeáveis com `AddQueryableDynamicFilter`, em qualquer ordem entre si. O que importa é a ordem **em relação ao primeiro uso** de `IPropertyPathProvider`/`IFilterBuilder`/`ISortBuilder`: o mapa de caminhos é cacheado por tipo na primeira resolução, então registrar (ou alterar) a configuração de um tipo depois de ele já ter sido consultado não tem efeito.
+
+### Semântica de mesclagem
+
+O mapa final de cada tipo é composto assim, nesta ordem:
+
+| Passo | Efeito |
+| --- | --- |
+| 1. Mapa automático por reflexão | Todas as propriedades públicas de `TEntity` (e navegações), como hoje — inclui aliases de `[Queryable]`. |
+| 2. `Ignore(...)` | Remove do mapa o(s) alias(es) cujo caminho corresponda estruturalmente ao caminho ignorado — a comparação é pela cadeia de `PropertyInfo`, não pelo texto do alias, então `Ignore(p => p.Preco)` remove o alias mesmo que ele venha de `[Queryable("valor")]`. |
+| 3. Aliases configurados (`For(...).As(...)`) | Cada alias configurado **sobrescreve** o automático de mesmo nome (ex.: `For(p => p.Categoria.Nome).As("categoria")` substitui o `categoria` que antes apontava só para `Categoria`) e **coexiste** com o alias automático aninhado (`categoria.nome` continua resolvendo, em paralelo a `categoria`) — os dois apontam para o mesmo caminho. Essa coexistência permite migrar o frontend para o novo alias sem quebrar o contrato HTTP num único deploy. |
+| 4. `OnlyMapped()` | Se chamado, descarta tudo que não veio do passo 3 — o mapa final passa a conter **apenas** os aliases declarados via `For(...)` para aquele tipo. Decisão por tipo: outras entidades, configuradas ou não, não são afetadas. |
+
+Sem `OnlyMapped()`, configurar um tipo é estritamente aditivo: nada que já era consultável por reflexão deixa de ser, mesmo depois da configuração fluente entrar em vigor. `OnlyMapped()` é a forma de fechar essa superfície — por exemplo, para impedir que um campo sensível como `SenhaHash` seja filtrável, já que sem ele qualquer propriedade pública continua exposta por padrão (ver aviso na seção anterior).
+
+O atributo `[Queryable]` continua funcionando exatamente como antes — a configuração fluente é aditiva, não o substitui. É possível misturar os dois: uma entidade com `[Queryable("valor")]` em `Preco` e uma `QueryableConfiguration<Produto>` que só colapsa `Categoria.Nome`.
 
 ## Caminho A — query string automática com `QuerySpec<T>`
 
