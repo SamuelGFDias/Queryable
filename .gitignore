@@ -8,3 +8,4 @@ riderModule.iml
 **/.idea/
 publish.ps1
 repomix-output.md
+.claude/worktrees/
