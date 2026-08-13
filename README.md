@@ -551,9 +551,65 @@ GET /api/produtos?filter=not ativo=false
 GET /api/produtos?filter=id__in=(1,2,3)
 ```
 
-Qualquer erro de sintaxe (parêntese ou aspas não fechados, palavra-chave sem aspas em posição de valor, `in` fora de parênteses, item de `in` com vírgula literal, token sobrando no fim da expressão etc.) lança `FilterExpressionSyntaxException` — especialização de `ArgumentException`, com a propriedade `Position` (1-based, posição aproximada do erro na string de entrada). Assim como um campo de filtro/ordenação desconhecido (ver [Limitações e armadilhas conhecidas](#limitações-e-armadilhas-conhecidas)), sem um middleware de exceção essa exceção não tratada vira 500 no cliente em vez de 400.
+Qualquer erro de sintaxe (parêntese ou aspas não fechados, palavra-chave sem aspas em posição de valor, `in` fora de parênteses, item de `in` com vírgula literal, token sobrando no fim da expressão etc.) lança `FilterExpressionSyntaxException` — especialização de `ArgumentException`, com a propriedade `Position` (1-based, posição aproximada do erro na string de entrada). Via `filter=` em `[FromQuery] QuerySpec<T>` (Caminho A), esse erro — e também um erro de limite (ver [Limites de segurança de filtros compostos](#limites-de-segurança-de-filtros-compostos)) — é capturado por `QuerySpecModelBinder<T>` e vira `400` automaticamente com `[ApiController]`. Chamando `FilterExpressionParser.Parse`/`RequestQueryExtensions.ToQuerySpec<T>()` diretamente (Caminho B), a exceção continua sendo lançada normalmente: sem um middleware de exceção, ela vira 500 no cliente em vez de 400.
 
 **Combinação com a árvore JSON:** em `RequestQuery`, `Filter` (árvore JSON) e `FilterExpression` (mini-linguagem) podem ser preenchidos ao mesmo tempo. Se só um dos dois vier preenchido, `QuerySpec<T>.Filter` recebe esse valor sem alteração; se os dois vierem preenchidos, o predicado final é o `AND` dos dois — `FilterGroup(FilterLogic.And, [Filter, filtro-da-expressão])`, nunca um sobrescreve o outro. `RequestQueryExtensions.ToQuerySpec<T>()` faz essa combinação.
+
+## Limites de segurança de filtros compostos
+
+As duas portas acima (JSON via `Filter` e mini-linguagem via `filter`/`FilterExpression`) aceitam uma expressão booleana arbitrária vinda de um cliente externo — na prática, um pequeno "programa" que o servidor concorda em executar. Sem teto, uma árvore muito aninhada ou com centenas de nós faz o compilador `FilterNode → Expression` montar uma `Expression` gigante e o banco planejar um `WHERE` desproporcional — negação de serviço tanto na aplicação (tempo/memória de montagem) quanto no banco (tempo de planejamento/execução da query). Não é preciso má-fé: um frontend com bug montando a expressão dentro de um laço já é suficiente.
+
+`FilterLimits` (`Queryable.Filtering`) define quatro tetos, todos com default:
+
+| Limite | Default | O que protege |
+| --- | --- | --- |
+| `MaxDepth` | `6` | Profundidade de aninhamento de `FilterGroup`/`FilterNot` na árvore. |
+| `MaxNodes` | `100` | Número total de nós (`FilterCondition` + `FilterGroup` + `FilterNot`, somados recursivamente) na árvore. |
+| `MaxExpressionLength` | `4096` | Tamanho, em caracteres, da string de entrada da mini-linguagem — verificado antes de tokenizar. |
+| `MaxInItems` | `200` | Quantidade de itens na lista CSV de uma condição com `operator: "in"`. |
+
+### Como configurar
+
+`AddQueryableDynamicFilter` tem uma sobrecarga que recebe um `Action<FilterLimits>` para sobrescrever os defaults, registrando o resultado como `Singleton` (a mesma instância vale para toda a aplicação, resolvida por requisição a partir do DI):
+
+```csharp
+using Queryable.Extensions;
+
+builder.Services.AddQueryableDynamicFilter(limits =>
+{
+    limits.MaxDepth = 8;
+    limits.MaxNodes = 200;
+});
+```
+
+### Quando a validação acontece
+
+A validação ocorre **antes** de qualquer compilação para `Expression`:
+
+- `MaxExpressionLength` é verificado sobre a string bruta da mini-linguagem, antes mesmo de tokenizar — uma expressão absurdamente longa é rejeitada por tamanho mesmo que sintaticamente inválida, sem gastar tempo de parsing nela.
+- Os outros três limites são verificados por `FilterLimitValidator.Validate` logo depois que a árvore é montada (ao final de `FilterExpressionParser.Parse`) ou desserializada (`FilterNodeJsonConverter.Read`), sempre antes de o compilador `FilterNode → Expression` de `FilterBuilder` tocar nela.
+
+Como consequência, uma árvore que **ao mesmo tempo** excede um limite e referencia um campo inexistente falha pelo limite, não pelo campo — o validador nunca resolve nomes de propriedade (isso é responsabilidade de uma etapa posterior e separada, o compilador), então o único erro possível nesse cenário é `FilterLimitExceededException`.
+
+### A soma das duas origens conta
+
+Em `RequestQuery`, `Filter` (árvore JSON) e `FilterExpression` (mini-linguagem) podem, cada um isoladamente, caber dentro de todos os limites e a combinação dos dois estourar um teto — por exemplo, dois grupos de 55 condições cada um ficam abaixo do `MaxNodes` default (100), mas a árvore combinada (`FilterGroup(And, [Filter, filtro-da-expressão])`) soma 113 nós. Por isso `RequestQueryExtensions.ToQuerySpec<T>()` (e, do mesmo jeito, `QuerySpecModelBinder<T>.BuildSpec`) revalida a árvore final já combinada, inteira, depois de montá-la — não basta cada origem passar isoladamente.
+
+### O erro
+
+Um limite violado lança `FilterLimitExceededException` (`Queryable.Filtering`), especialização de `ArgumentException`. Expõe `Limit` (`FilterLimitKind`: `MaxDepth`, `MaxNodes`, `MaxExpressionLength` ou `MaxInItems`), `Found` (o valor efetivamente encontrado) e `Allowed` (o teto configurado), além da mensagem já com os números embutidos.
+
+### Resposta HTTP: 400 em vez de 500
+
+`QuerySpecModelBinder<T>.BindModelAsync` (o binder usado por `[FromQuery] QuerySpec<T>`, Caminho A) captura `FilterExpressionSyntaxException` e `FilterLimitExceededException` e as converte em `ModelState`/`ModelBindingResult.Failed()` — com `[ApiController]`, isso vira automaticamente um `400` com a mensagem do erro, em vez do `500` não tratado que a exceção produziria antes. Essa é uma mudança de comportamento em relação às versões anteriores, onde erro de sintaxe da mini-linguagem e (agora) erro de limite escapavam como exceção não capturada.
+
+Essa conversão para 400 é específica do binder — o método estático `QuerySpecModelBinder<T>.BuildSpec` continua **lançando** as duas exceções (é assim que fica testável sem infraestrutura web), e `RequestQueryExtensions.ToQuerySpec<T>()` (Caminho B, chamado manualmente dentro da ação do controller) também lança normalmente. Se você chama `ToQuerySpec<T>()` você mesmo dentro de uma ação, sem um middleware de exceção global, o mesmo erro ainda vira 500.
+
+### Limitação conhecida: o conversor JSON sempre usa os defaults
+
+`FilterNodeJsonConverter` (o `JsonConverter<FilterNode>` que desserializa `Filter`) valida a árvore assim que termina de montá-la, mas `System.Text.Json` não passa `IServiceProvider` para um `JsonConverter`, então essa validação usa sempre `FilterLimits.Default` — os limites configurados via `AddQueryableDynamicFilter(Action<FilterLimits>)` no container de DI não chegam até ali. Consequência prática: se você configurar limites **mais permissivos** que os defaults (ex.: `MaxNodes = 200`), um corpo JSON com 150 nós ainda é barrado pelos defaults (100) na desserialização, antes mesmo de chegar ao binder ou a `ToQuerySpec`.
+
+Os limites configurados são de fato aplicados depois, na revalidação da árvore final feita por `QuerySpecModelBinder<T>.BuildSpec` e por `RequestQueryExtensions.ToQuerySpec<T>()` — mas só protegem contra limites **mais restritivos** que os defaults, porque tudo que já passou pelo conversor JSON necessariamente respeitou os defaults primeiro.
 
 ## Limitações e armadilhas conhecidas
 
