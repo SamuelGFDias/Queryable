@@ -38,7 +38,7 @@ O par que realmente paraleliza é etapa 3 (configuração/caminhos) com etapa 4 
 
 ## Commit
 
-Convenção de `AGENTS.md`: `<ícone> Qeryable - <categoria>: <descrição>`. O prefixo é literalmente `Qeryable` (sem o "u") — **não "corrija"**. Categorias: `feat` ✨, `bugfix` 🐛, `refactor` ♻️, `perf` 🚀, `build` ⚙️, `ci` 🔧, `test` 🧪, `docs` 📚, `chore` 🧹, `deps` 📦, `remove` 🔥, `style` 🎨.
+Convenção de `AGENTS.md`: `<ícone> Queryable - <categoria>: <descrição>`. Até a release `v10.3.0` (commits até `77e1f07`), o prefixo era grafado `Qeryable` (sem o "u") por convenção antiga do `AGENTS.md` — corrigido para `Queryable` a partir daqui; o histórico anterior não foi reescrito (decisão do usuário), então commits antigos com `Qeryable` são esperados e não devem ser usados como referência para commits novos. Categorias: `feat` ✨, `bugfix` 🐛, `refactor` ♻️, `perf` 🚀, `build` ⚙️, `ci` 🔧, `test` 🧪, `docs` 📚, `chore` 🧹, `deps` 📦, `remove` 🔥, `style` 🎨.
 
 **Nunca** inclua trailer `Co-Authored-By:`.
 

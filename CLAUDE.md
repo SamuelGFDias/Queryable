@@ -107,7 +107,7 @@ O repositório publica em **dois remotes**: `origin` tem duas push URLs (GitHub 
 
 O CI do GitLab (`.gitlab-ci.yml`) delega ao pipeline compartilhado `ses-rj/ci-cd/pipelines` (`simple-ci/manifests/v1/v1.yml`) e não tem configuração local.
 
-Mensagens de commit seguem `AGENTS.md`: `<ícone> Qeryable - <categoria>: <descrição>` em português, com categorias fixas (`feat` ✨, `bugfix` 🐛, `refactor` ♻️, `remove` 🔥, `chore` 🧹, `docs` 📚, `test` 🧪, `build` ⚙️, `ci` 🔧, `deps` 📦, `perf` 🚀, `style` 🎨). O prefixo em `AGENTS.md` está literalmente escrito `Qeryable` (sem o "u") e o histórico é inconsistente entre `Qeryable` e `Queryable`.
+Mensagens de commit seguem `AGENTS.md`: `<ícone> Queryable - <categoria>: <descrição>` em português, com categorias fixas (`feat` ✨, `bugfix` 🐛, `refactor` ♻️, `remove` 🔥, `chore` 🧹, `docs` 📚, `test` 🧪, `build` ⚙️, `ci` 🔧, `deps` 📦, `perf` 🚀, `style` 🎨). Até `v10.3.0` (commits até `77e1f07`), `AGENTS.md` grafava o prefixo `Qeryable` (sem o "u") e o histórico é inconsistente entre `Qeryable` e `Queryable`; a partir daqui `AGENTS.md` foi corrigido para `Queryable` e commits novos devem usar essa grafia. O histórico antigo não foi reescrito.
 
 ## Repomix
 
