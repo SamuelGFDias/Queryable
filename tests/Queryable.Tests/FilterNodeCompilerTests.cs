@@ -1,6 +1,8 @@
+using System.Linq.Expressions;
 using Xunit;
 using Queryable.Builders;
 using Queryable.Filtering;
+using Queryable.Interfaces;
 
 namespace Queryable.Tests;
 
@@ -164,5 +166,79 @@ public class FilterNodeCompilerTests
 
         Assert.Single(resultado);
         Assert.Equal("Lapis", resultado[0].Nome);
+    }
+
+    [Fact]
+    public void BuildPredicate_QueryParamsEFilterNulo_DelegaParaSobrecargaDeDicionario()
+    {
+        var builder = new FilterBuilder();
+        var queryParams = new Dictionary<string, string> { ["ativo"] = "true" };
+
+        var predicate = builder.BuildPredicate<Produto>(queryParams, filter: null);
+        List<Produto> resultado = CriarProdutos().AsQueryable().Where(predicate).ToList();
+
+        Assert.Equal(2, resultado.Count);
+        Assert.All(resultado, p => Assert.True(p.Ativo));
+    }
+
+    [Fact]
+    public void BuildPredicate_QueryParamsEFilterPreenchidos_CombinamPorAnd()
+    {
+        var builder = new FilterBuilder();
+        var queryParams = new Dictionary<string, string> { ["ativo"] = "true" };
+        var filter = new FilterGroup(FilterLogic.Or,
+        [
+            new FilterCondition("nome", "eq", "Caderno"),
+            new FilterCondition("nome", "eq", "Lapis")
+        ]);
+
+        var predicate = builder.BuildPredicate<Produto>(queryParams, filter);
+        List<Produto> resultado = CriarProdutos().AsQueryable().Where(predicate).ToList();
+
+        // ativo=true (Caneta Azul, Lapis) AND (nome=Caderno OR nome=Lapis) -> só Lapis.
+        Assert.Single(resultado);
+        Assert.Equal("Lapis", resultado[0].Nome);
+    }
+
+    [Fact]
+    public void BuildPredicate_QueryParamsVazioEFilterPreenchido_ResultadoIgualAoFilterIsolado()
+    {
+        var builder = new FilterBuilder();
+        var filter = new FilterCondition("categoria.nome", "eq", "Papelaria");
+
+        var predicate = builder.BuildPredicate<Produto>(new Dictionary<string, string>(), filter);
+        List<Produto> resultado = CriarProdutos().AsQueryable().Where(predicate).ToList();
+
+        Assert.Equal(2, resultado.Count);
+        Assert.All(resultado, p => Assert.Equal("Papelaria", p.Categoria.Nome));
+    }
+
+    private sealed class FilterBuilderSemSuporteAArvore : IFilterBuilder
+    {
+        public Expression<Func<T, bool>> BuildPredicate<T>(IDictionary<string, string> queryParams) =>
+            _ => true;
+    }
+
+    [Fact]
+    public void IFilterBuilder_ImplementacaoExternaSemOverride_FilterNulo_DelegaParaDicionario()
+    {
+        // Default interface method: implementação externa que não sobrescreveu a sobrecarga
+        // nova continua funcionando quando filter é null (aditivo, sem quebrar consumidores
+        // externos existentes).
+        IFilterBuilder builder = new FilterBuilderSemSuporteAArvore();
+
+        var predicate = builder.BuildPredicate<Produto>(new Dictionary<string, string>(), filter: null);
+
+        Assert.True(predicate.Compile()(new Produto()));
+    }
+
+    [Fact]
+    public void IFilterBuilder_ImplementacaoExternaSemOverride_FilterPreenchido_LancaNotSupportedException()
+    {
+        IFilterBuilder builder = new FilterBuilderSemSuporteAArvore();
+        var filter = new FilterCondition("nome", "eq", "x");
+
+        Assert.Throws<NotSupportedException>(() =>
+            builder.BuildPredicate<Produto>(new Dictionary<string, string>(), filter));
     }
 }

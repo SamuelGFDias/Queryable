@@ -1,6 +1,7 @@
 using Xunit;
 using Queryable.Core;
 using Queryable.Extensions;
+using Queryable.Filtering;
 
 namespace Queryable.Tests;
 
@@ -142,5 +143,30 @@ public class RequestQueryExtensionsTests
 
         Assert.Equal(1, spec.Page);
         Assert.Equal(10, spec.PageSize);
+    }
+
+    [Fact]
+    public void ToQuerySpec_FilterNulo_ResultaEmFilterNuloNoQuerySpec()
+    {
+        var request = new RequestQuery();
+
+        QuerySpec<Produto> spec = request.ToQuerySpec<Produto>();
+
+        Assert.Null(spec.Filter);
+    }
+
+    [Fact]
+    public void ToQuerySpec_FilterPreenchido_ChegaAoQuerySpecSemAlteracao()
+    {
+        var filter = new FilterGroup(FilterLogic.Or,
+        [
+            new FilterCondition("nome", "eq", "ana"),
+            new FilterCondition("nome", "eq", "bia")
+        ]);
+        var request = new RequestQuery { Filter = filter };
+
+        QuerySpec<Produto> spec = request.ToQuerySpec<Produto>();
+
+        Assert.Same(filter, spec.Filter);
     }
 }
