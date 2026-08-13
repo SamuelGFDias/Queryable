@@ -67,3 +67,22 @@ public class ComCampoPublico
 {
     public string CampoPublico = string.Empty;
 }
+
+// Cenário de navegação profunda (3 níveis), no espírito do caso real observado em produção
+// (Notificacao.Paciente.Cpf.Value -> alias cpf_paciente): Registro.Pessoa.Documento.Value.
+public class Documento
+{
+    public string Value { get; set; } = string.Empty;
+}
+
+public class Pessoa
+{
+    public string Nome { get; set; } = string.Empty;
+    public Documento Documento { get; set; } = new();
+}
+
+public class Registro
+{
+    public int Id { get; set; }
+    public Pessoa Pessoa { get; set; } = new();
+}

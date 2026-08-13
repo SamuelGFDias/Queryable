@@ -64,6 +64,25 @@ public class QueryableConfigurationTests
             For(selector);
     }
 
+    // ----- navegação profunda (3 níveis): Registro.Pessoa.Documento.Value -----
+
+    private sealed class RegistroConfigAliasProfundo : QueryableConfiguration<Registro>
+    {
+        public RegistroConfigAliasProfundo()
+        {
+            For(r => r.Pessoa.Documento.Value).As("documento_pessoa");
+        }
+    }
+
+    private sealed class RegistroConfigOnlyMappedProfundo : QueryableConfiguration<Registro>
+    {
+        public RegistroConfigOnlyMappedProfundo()
+        {
+            OnlyMapped();
+            For(r => r.Pessoa.Documento.Value).As("documento_pessoa");
+        }
+    }
+
     private static IPropertyPathProvider CriarProvider<TEntity>(QueryableConfiguration<TEntity> configuracao)
         where TEntity : class
     {
@@ -268,5 +287,88 @@ public class QueryableConfigurationTests
 
         Assert.Single(resultado);
         Assert.Equal("Caneta", resultado[0].Nome);
+    }
+
+    // ----- navegação profunda (3 níveis): Registro.Pessoa.Documento.Value -----
+
+    [Fact]
+    public void AliasConfigurado_TresNiveis_ResolveParaCaminhoCompletoNaOrdemCerta()
+    {
+        IPropertyPathProvider provider = CriarProvider(new RegistroConfigAliasProfundo());
+
+        var caminhos = provider.GetPaths<Registro>();
+
+        Assert.True(caminhos.TryGetValue("documento_pessoa", out List<System.Reflection.PropertyInfo>? caminho));
+        Assert.Equal(new[] { "Pessoa", "Documento", "Value" }, caminho!.Select(p => p.Name).ToArray());
+    }
+
+    [Fact]
+    public void AliasConfigurado_TresNiveis_Coexiste_ComAliasAutomaticoAntigo()
+    {
+        IPropertyPathProvider provider = CriarProvider(new RegistroConfigAliasProfundo());
+
+        var caminhos = provider.GetPaths<Registro>();
+
+        Assert.True(caminhos.ContainsKey("documento_pessoa"));
+        Assert.True(caminhos.ContainsKey("pessoa.documento.value"));
+        Assert.Equal(caminhos["documento_pessoa"], caminhos["pessoa.documento.value"]);
+    }
+
+    [Fact]
+    public void FiltroPontaAPonta_AliasTresNiveis_FiltraCorretamente()
+    {
+        IPropertyPathProvider provider = CriarProvider(new RegistroConfigAliasProfundo());
+        var filterBuilder = new FilterBuilder(provider);
+
+        var registros = new List<Registro>
+        {
+            new() { Id = 1, Pessoa = new Pessoa { Nome = "Ana", Documento = new Documento { Value = "111" } } },
+            new() { Id = 2, Pessoa = new Pessoa { Nome = "Beto", Documento = new Documento { Value = "222" } } }
+        };
+
+        var predicate = filterBuilder.BuildPredicate<Registro>(
+            new Dictionary<string, string> { ["documento_pessoa"] = "111" });
+        List<Registro> resultado = registros.AsQueryable().Where(predicate).ToList();
+
+        Assert.Single(resultado);
+        Assert.Equal(1, resultado[0].Id);
+    }
+
+    [Fact]
+    public void OnlyMapped_CaminhoProfundo_ConfiguradoFuncionaEAutomaticoDeixaDeExistir()
+    {
+        IPropertyPathProvider provider = CriarProvider(new RegistroConfigOnlyMappedProfundo());
+
+        var caminhos = provider.GetPaths<Registro>();
+
+        Assert.True(caminhos.ContainsKey("documento_pessoa"));
+        Assert.Equal(new[] { "Pessoa", "Documento", "Value" }, caminhos["documento_pessoa"].Select(p => p.Name).ToArray());
+        Assert.False(caminhos.ContainsKey("pessoa.documento.value"));
+    }
+
+    [Fact]
+    public void AliasComUnderscoreSimples_EhSeguro_DuploUnderscoreContinuaSeparadorDeOperador()
+    {
+        IPropertyPathProvider provider = CriarProvider(new RegistroConfigAliasProfundo());
+        var filterBuilder = new FilterBuilder(provider);
+
+        var registros = new List<Registro>
+        {
+            new() { Id = 1, Pessoa = new Pessoa { Nome = "Ana", Documento = new Documento { Value = "12345" } } },
+            new() { Id = 2, Pessoa = new Pessoa { Nome = "Beto", Documento = new Documento { Value = "99999" } } }
+        };
+
+        // Alias simples (sem operador): eq implícito.
+        var predicateEq = filterBuilder.BuildPredicate<Registro>(
+            new Dictionary<string, string> { ["documento_pessoa"] = "12345" });
+        Assert.Single(registros.AsQueryable().Where(predicateEq).ToList());
+
+        // "__" continua sendo o separador de operador, mesmo com "_" simples já presente no alias.
+        var predicateContains = filterBuilder.BuildPredicate<Registro>(
+            new Dictionary<string, string> { ["documento_pessoa__contains"] = "234" });
+        List<Registro> resultado = registros.AsQueryable().Where(predicateContains).ToList();
+
+        Assert.Single(resultado);
+        Assert.Equal(1, resultado[0].Id);
     }
 }
