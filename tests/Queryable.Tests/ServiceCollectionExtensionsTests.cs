@@ -1,11 +1,22 @@
 using Xunit;
 using Microsoft.Extensions.DependencyInjection;
 using Queryable.Builders;
+using Queryable.Configuration;
 using Queryable.Core;
 using Queryable.Extensions;
 using Queryable.Interfaces;
 
 namespace Queryable.Tests;
+
+// Configuração usada apenas por AddQueryableConfigurationsFromAssembly_EncontraERegistraConfiguracoesDoAssemblyDeTeste,
+// para provar que a varredura de assembly encontra e registra configurações concretas.
+public sealed class CategoriaAliasQueryConfiguration : QueryableConfiguration<Categoria>
+{
+    public CategoriaAliasQueryConfiguration()
+    {
+        For(c => c.Nome).As("apelido");
+    }
+}
 
 public class ServiceCollectionExtensionsTests
 {
@@ -43,6 +54,88 @@ public class ServiceCollectionExtensionsTests
             d.ServiceType == typeof(IPropertyPathProvider)
          && d.Lifetime == ServiceLifetime.Singleton
          && d.ImplementationType == typeof(ReflectionPropertyPathProvider));
+    }
+
+    [Fact]
+    public void AddQueryableDynamicFilter_RegistraQueryableConfigurationRegistryComoSingleton()
+    {
+        IServiceCollection services = new ServiceCollection();
+
+        services.AddQueryableDynamicFilter();
+
+        Assert.Contains(services, d =>
+            d.ServiceType == typeof(QueryableConfigurationRegistry)
+         && d.Lifetime == ServiceLifetime.Singleton);
+    }
+
+    [Fact]
+    public void AddQueryableConfiguration_RegistraQueryableConfigurationRegistryComoSingleton()
+    {
+        IServiceCollection services = new ServiceCollection();
+
+        services.AddQueryableConfiguration<CategoriaAliasQueryConfiguration>();
+
+        Assert.Contains(services, d =>
+            d.ServiceType == typeof(QueryableConfigurationRegistry)
+         && d.Lifetime == ServiceLifetime.Singleton);
+    }
+
+    [Fact]
+    public void AddQueryableConfigurationsFromAssembly_EncontraERegistraConfiguracoesDoAssemblyDeTeste()
+    {
+        IServiceCollection services = new ServiceCollection();
+
+        services
+            .AddQueryableDynamicFilter()
+            .AddQueryableConfigurationsFromAssembly(typeof(ServiceCollectionExtensionsTests).Assembly);
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        IPropertyPathProvider pathProvider = provider.GetRequiredService<IPropertyPathProvider>();
+
+        IReadOnlyDictionary<string, List<System.Reflection.PropertyInfo>> caminhos = pathProvider.GetPaths<Categoria>();
+
+        Assert.True(caminhos.ContainsKey("apelido"));
+    }
+
+    [Fact]
+    public void AddQueryableConfiguration_EAddQueryableDynamicFilter_CompartilhamAMesmaInstanciaDeRegistry_IndependenteDaOrdem()
+    {
+        IServiceCollection servicesConfigPrimeiro = new ServiceCollection();
+        servicesConfigPrimeiro
+            .AddQueryableConfiguration<CategoriaAliasQueryConfiguration>()
+            .AddQueryableDynamicFilter();
+
+        using ServiceProvider providerConfigPrimeiro = servicesConfigPrimeiro.BuildServiceProvider();
+        var caminhosConfigPrimeiro = providerConfigPrimeiro
+            .GetRequiredService<IPropertyPathProvider>()
+            .GetPaths<Categoria>();
+
+        Assert.True(caminhosConfigPrimeiro.ContainsKey("apelido"));
+
+        IServiceCollection servicesFilterPrimeiro = new ServiceCollection();
+        servicesFilterPrimeiro
+            .AddQueryableDynamicFilter()
+            .AddQueryableConfiguration<CategoriaAliasQueryConfiguration>();
+
+        using ServiceProvider providerFilterPrimeiro = servicesFilterPrimeiro.BuildServiceProvider();
+        var caminhosFilterPrimeiro = providerFilterPrimeiro
+            .GetRequiredService<IPropertyPathProvider>()
+            .GetPaths<Categoria>();
+
+        Assert.True(caminhosFilterPrimeiro.ContainsKey("apelido"));
+    }
+
+    [Fact]
+    public void AddQueryableConfiguration_TipoQueNaoHerdaDeQueryableConfiguration_LancaArgumentException()
+    {
+        IServiceCollection services = new ServiceCollection();
+
+        Assert.Throws<ArgumentException>(() =>
+            services.AddQueryableConfiguration<TipoQueNaoEhConfiguracao>());
+    }
+
+    public sealed class TipoQueNaoEhConfiguracao
+    {
     }
 
     [Fact]

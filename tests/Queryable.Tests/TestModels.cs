@@ -60,3 +60,10 @@ public class No
     // Ciclo direto: No.Proximo é do próprio tipo No.
     public No? Proximo { get; set; }
 }
+
+// Modelo dedicado a exercitar a rejeição de campo (FieldInfo, não PropertyInfo) por
+// PropertyPathExtractor — os demais modelos deste arquivo só têm propriedades.
+public class ComCampoPublico
+{
+    public string CampoPublico = string.Empty;
+}
