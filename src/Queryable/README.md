@@ -194,6 +194,14 @@ Errado: "id__in=1,2,3,ativo=true"
 
 Sem `in` na string, vírgula funciona normalmente: `"nome=Notebook,ativo=true"`.
 
+> **Armadilha: `in` via `QueryFilter` exige `;` em algum lugar da string, mesmo com um único filtro.** A regra acima decide o separador olhando só se a string *contém* `;` — não se há mais de um par. Então um `QueryFilter` com um único filtro `in` e sem `;` nenhum cai no separador `,`, e a própria vírgula da lista do `in` é lida como separador de pares, quebrando em pedaços sem `=` e lançando `ArgumentException`. É preciso forçar o `;`, mesmo sem um segundo filtro para separar:
+>
+> ```text
+> Certo:  "categoriaid__in=1,2;"     (ponto-e-vírgula final, mesmo sem segundo filtro)
+> Certo:  "categoriaid__in=1,2;ativo=true"
+> Errado: "categoriaid__in=1,2"      (vira dois pares inválidos e lança ArgumentException)
+> ```
+
 ### `ApplyFilterPaginatedAsync` com projeção explícita
 
 ```csharp
@@ -313,13 +321,21 @@ public class PageMeta
 
 ## Limitações e armadilhas conhecidas
 
-- **Recursão sem proteção contra ciclos (o ponto mais sério).** `PathExtension.BuildPropertyPaths<T>` desce recursivamente em toda propriedade cujo tipo seja classe (`IsClass`) e não seja `string`, sem nenhuma guarda contra ciclos. Se `TEntity` tiver navegação bidirecional — por exemplo `Produto.Categoria` e `Categoria.Produtos` (`List<Produto>`) — a varredura entra em loop infinito e estoura `StackOverflowException` na primeira chamada que precisar do mapa de propriedades (filtro ou ordenação). **Workaround:** não use, como `TEntity` de `QuerySpec<T>`/`ApplyFilterPaginatedAsync`, uma entidade de EF Core com navegação de ida e volta; use uma projeção/DTO de entrada sem o lado inverso, ou quebre o ciclo com `[NotMapped]`/tipo auxiliar antes de expor a entidade a este pipeline.
-- **O operador `in` só converte tipos simples.** `BuildInExpression` (em `Builders/FilterBuilder.cs`) usa apenas `Convert.ChangeType` para cada item da lista — ao contrário de `ConvertValue`, usado pelos demais operadores, que trata `Guid`, enum, `DateOnly`, `TimeOnly`, `Nullable<T>` e o literal `"null"`. Na prática, `in` **não funciona com `Guid` nem com enum** (lança exceção em runtime); use `in` apenas com tipos primitivos (`int`, `long`, `decimal`, `string`, etc.).
+- **Navegação bidirecional é segura; coleções não são navegáveis; há teto de profundidade.** `PathExtension.BuildPropertyPaths<T>` tem três guardas contra o mapeamento explodir: (1) **guarda de coleção** — uma propriedade cujo tipo implementa `IEnumerable` (e não é `string`) continua entrando no mapa de aliases, mas a recursão não desce dentro dela; isso elimina o vetor clássico de recursão infinita em navegação bidirecional de EF Core (`Produto.Categoria` / `Categoria.Produtos`) e também os aliases lixo que antes vinham de `List<T>` (`.capacity`, `.count`, `.item`); (2) **guarda de ciclo por caminho** — um tipo já presente no caminho atual não é reentrado, mas isso vale só por caminho, não globalmente, de propósito: ramos irmãos do mesmo tipo (ex.: `Pedido.EnderecoEntrega` e `Pedido.EnderecoCobranca`, ambos `Endereco`) continuam os dois mapeados; (3) **limite de profundidade** — `MaxDepth = 5` níveis de aninhamento, além disso o mapeamento simplesmente para de descer. Na prática, isso significa que `Produto.Categoria` e `Categoria.Produtos` coexistindo não quebra mais nada, mas também que não dá para filtrar *através* de uma coleção (`categoria.produtos.nome` não é endereçável — só o que estiver até 5 níveis de navegação simples de profundidade).
+- **O operador `in` usa a mesma conversão de valor dos demais operadores.** `BuildInExpression` (em `Builders/FilterBuilder.cs`) compartilha o conversor escalar usado por `ConvertValue`, então `Guid`, enum, `DateOnly`, `TimeOnly`, `Nullable<T>` e o literal `"null"` funcionam normalmente dentro de `in` — por exemplo `id__in=3fa85f64-5717-4562-b3fc-2c963f66afa6,7c9e6679-7425-40de-944b-e07fc1f90ae7` funciona. Duas coisas a saber: uma lista `in` sem nenhum item válido após o split lança `ArgumentException`; e itens vazios ou só com espaço em branco na lista são ignorados silenciosamente (`id__in=1,,2` equivale a `id__in=1,2`).
 - **`contains` só é suportado em `string`.** Usar `contains` em qualquer outra propriedade lança `NotSupportedException`.
 - **`Page` e `PageSize` ignoram valores `<= 0` silenciosamente**, mantendo o valor anterior (`Page` default `1`, `PageSize` default `10`) em vez de lançar erro — vale em `QuerySpec<T>` e, por consequência, em `RequestQuery.ToQuerySpec<T>()`.
 - **Sem `sort` explícito, `SortBuilder` aplica `OrderBy(x => 0)`.** Isso garante que `Skip`/`Take` sejam avaliados de forma determinística pelo provider LINQ, mas não implica ordem estável entre páginas no banco — se os dados mudam entre duas requisições paginadas sem ordenação real, o mesmo item pode aparecer em páginas diferentes ou ser pulado.
 - **Chave de filtro ou campo de ordenação desconhecido lança `ArgumentException`** (`"Campo 'X' não é pesquisável."` para filtro; mensagem equivalente para ordenação). Uma query string malformada ou com campo inexistente vira uma exceção não tratada — sem um middleware/filtro de exceção global, isso retorna 500 ao cliente em vez de 400.
 - **`QueryFilter` malformado também lança `ArgumentException`** — um item sem `=` (ex.: `"ativo"`) ou com chave vazia (ex.: `"=true"`) invalida a requisição inteira.
+
+## Testes
+
+O repositório tem suíte automatizada em `tests/Queryable.Tests` (núcleo) e `tests/Queryable.EntityFrameworkCore.Tests` (integração EF Core, contra SQLite in-memory — necessário para pegar erro de tradução para SQL que uma lista em memória não revelaria). Roda com:
+
+```bash
+dotnet test
+```
 
 ## Licença
 

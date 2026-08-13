@@ -22,7 +22,7 @@ dotnet pack src/Queryable.EntityFrameworkCore/Queryable.EntityFrameworkCore.cspr
 
 **`dotnet pack` sozinho falha com `NU5026`** (dll não encontrada). `GeneratePackageOnBuild=true` quebra a ordem build→pack padrão, então sempre rode `dotnet build -c Release` antes e passe `--no-build` no pack. Existem agora dois projetos empacotáveis, ambos precisam de `dotnet pack`. O workflow de publicação faz exatamente isso.
 
-Não existe projeto de teste — `dotnet test` não roda nada. Ao alterar `FilterBuilder`/`SortBuilder`/`PathExtension`, valide manualmente: as regressões aqui são silenciosas em compilação e só aparecem como exceção em runtime, na primeira requisição.
+Existem duas suítes xUnit: `tests/Queryable.Tests` (núcleo, sem EF Core) e `tests/Queryable.EntityFrameworkCore.Tests` (EF Core contra SQLite in-memory). Rodam com `dotnet test`. A suíte EF importa especificamente porque `List<T>.AsQueryable()` (LINQ-to-Objects) executa em memória `Expression`s que o EF Core não consegue traduzir para SQL — um teste que só passa pela suíte núcleo pode estar verde com uma expressão que quebra em produção contra um provider real; só a suíte EF pega erro de tradução.
 
 Versões de pacote são centralizadas em `Directory.Packages.props` (`ManagePackageVersionsCentrally`) — `PackageReference` no `.csproj` vai **sem** `Version`.
 
@@ -46,7 +46,7 @@ query string
 Pontos não óbvios do mapeamento:
 
 - **`[Queryable]` é opcional e não restringe nada.** A checagem `if (attr == null) continue;` está comentada em `src/Queryable/Extensions/PathExtension.cs:25-26`. Hoje **toda propriedade pública** é filtrável/ordenável; o atributo só define um *alias*. O `src/Queryable/README.md` documenta isso como superfície de exposição da API. Se for reintroduzir o opt-in, é ali — e o README precisa acompanhar.
-- **Não há proteção contra ciclos.** A recursão desce em toda `prop.PropertyType.IsClass` que não seja `string`. Uma navegação bidirecional de EF (`Produto.Categoria.Produtos`) causa recursão infinita. É a limitação estrutural mais séria da lib.
+- **Há três guardas contra ciclo/explosão na recursão.** (1) guarda de coleção: propriedade cujo tipo implementa `IEnumerable` (e não é `string`) entra no mapa de aliases, mas a recursão não desce nela — elimina o vetor clássico de recursão infinita em navegação bidirecional de EF (`Produto.Categoria`/`Categoria.Produtos`) e os aliases lixo de `List<T>` (`.capacity`, `.count`, `.item`); (2) guarda de ciclo por caminho: um tipo já presente no caminho atual não é reentrado — **de propósito é por caminho, não global**, porque uma guarda global quebraria ramos irmãos do mesmo tipo (ex.: `Pedido.EnderecoEntrega` e `Pedido.EnderecoCobranca`, ambos `Endereco`, que precisam continuar os dois mapeados); (3) `MaxDepth = 5`, rede de segurança extra independente das outras duas.
 - Aliases aninhados usam ponto: `categoria.nome`. Chaves de filtro usam `campo__operador`; sem sufixo, o operador é `eq`.
 
 Outros comportamentos que dependem de ler mais de um arquivo:
@@ -54,7 +54,7 @@ Outros comportamentos que dependem de ler mais de um arquivo:
 - `Apply` **sempre** ordena — sem `sort`, `SortBuilder` devolve `query.OrderBy(x => 0)`. Isso é o que torna `ApplyPaged` (`Skip`/`Take`) legítimo no provider. Não remova esse fallback.
 - `ApplyPaged` **não** chama `Apply`. O chamador encadeia os dois na ordem `Apply` → `CountAsync` → `ApplyPaged`, porque o total tem que ser contado sobre o conjunto filtrado e não paginado.
 - `QuerySpec.Page`/`PageSize` ignoram atribuições `<= 0` no setter e mantêm o default (1 / 10). Não valide isso de novo na borda.
-- **Conversão de valores diverge entre operadores.** `ConvertValue` trata `Guid`, enums, `DateOnly`/`TimeOnly`, `Nullable<>` e o literal `"null"`; já `BuildInExpression` usa só `Convert.ChangeType`, então `in` quebra para `Guid`/enum. Se for corrigir, é fazer `in` reusar `ConvertValue`.
+- **Conversão de valores é única e compartilhada entre operadores.** `ConvertScalar` (privado, em `FilterBuilder.cs`) trata `Guid`, enums, `DateOnly`/`TimeOnly`, `Nullable<>` e o literal `"null"`, e é chamado tanto por `ConvertValue` (operadores escalares) quanto por `BuildInExpression` (`in`). Essa unificação existe justamente para as duas rotinas não voltarem a divergir — ao mexer em conversão de valor, mexa em `ConvertScalar`, nunca duplique lógica em um dos dois chamadores.
 - O binder aceita tanto `?nome=ana` quanto a forma `?Filters[nome]=ana` que o Swagger UI gera (regex `SwaggerFilterRegex`), e normaliza as chaves para minúsculas.
 - `contains` só é aceito em `string`; qualquer outro tipo cai no `_ => throw NotSupportedException`.
 
@@ -80,7 +80,7 @@ Da mesma forma, no pacote EF Core o namespace `Queryable.EntityFrameworkCore` co
 
 ## Publicação no NuGet
 
-`.github/workflows/publish.yml` dispara em tag `v*`: build Release → pack dos DOIS projetos → `NuGet/login@v1` (OIDC, sem secret, user `samueldias21`) → `dotnet nuget push --skip-duplicate`.
+`.github/workflows/publish.yml` dispara em tag `v*`: build Release → `dotnet test` (as duas suítes precisam passar) → pack dos DOIS projetos → `NuGet/login@v1` (OIDC, sem secret, user `samueldias21`) → `dotnet nuget push --skip-duplicate`.
 
 Ambos os pacotes (`Queryable.DynamicFilter` e `Queryable.DynamicFilter.EntityFrameworkCore`) compartilham a mesma versão, derivada da tag, então saem sempre em par.
 
@@ -112,3 +112,7 @@ Mensagens de commit seguem `AGENTS.md`: `<ícone> Qeryable - <categoria>: <descr
 ## Repomix
 
 `repomix.config.json` empacota o repo em Markdown para consumo por LLM. `.repomixignore` ainda exclui `Api/` (projeto já removido) e `Queryable.slnx`. `repomix-output.xml` é um artefato versionado e desatualizado (formato XML antigo, anterior ao move para `src/`); a config atual gera `repomix-output.md`, que é gitignorado.
+
+## Propostas em aberto
+
+`docs/proposta-filtros-compostos.md` é uma **proposta para avaliação** (filtros compostos: OR, agrupamento, NOT), **nada dela foi implementado**. O comportamento atual (`Filters` como `Dictionary<string,string>`, combinação exclusiva por `AND`) permanece o real. Não confunda o que esse documento descreve com o estado atual do código.
