@@ -1,4 +1,5 @@
-﻿using System.Linq.Expressions;
+﻿using System.Globalization;
+using System.Linq.Expressions;
 using System.Reflection;
 using Queryable.Extensions;
 using Queryable.Interfaces;
@@ -67,22 +68,31 @@ namespace Queryable.Builders
             return (rawKey.ToLowerInvariant(), "eq");
         }
 
-        private static Expression ConvertValue(string value, PropertyInfo property)
+        /// <summary>
+        /// Converte uma única string para o valor tipado correspondente ao tipo alvo.
+        /// Lógica escalar compartilhada por <see cref="ConvertValue"/> e <see cref="BuildInExpression"/>.
+        /// </summary>
+        private static object? ConvertScalar(string value, Type targetType)
         {
-            Type targetType = property.PropertyType;
             Type baseType = Nullable.GetUnderlyingType(targetType) ?? targetType;
 
             if (value.Equals("null", StringComparison.OrdinalIgnoreCase))
-                return Expression.Constant(null, targetType);
+                return null;
 
-            object converted = baseType switch
+            return baseType switch
             {
                 _ when baseType == typeof(Guid)     => Guid.Parse(value),
                 _ when baseType.IsEnum              => Enum.Parse(baseType, value, true),
-                _ when baseType == typeof(DateOnly) => DateOnly.Parse(value),
-                _ when baseType == typeof(TimeOnly) => TimeOnly.Parse(value),
-                _                                   => Convert.ChangeType(value, baseType)
+                _ when baseType == typeof(DateOnly) => DateOnly.Parse(value, CultureInfo.InvariantCulture),
+                _ when baseType == typeof(TimeOnly) => TimeOnly.Parse(value, CultureInfo.InvariantCulture),
+                _                                   => Convert.ChangeType(value, baseType, CultureInfo.InvariantCulture)
             };
+        }
+
+        private static Expression ConvertValue(string value, PropertyInfo property)
+        {
+            Type targetType = property.PropertyType;
+            object? converted = ConvertScalar(value, targetType);
 
             return Expression.Constant(converted, targetType);
         }
@@ -90,12 +100,18 @@ namespace Queryable.Builders
         private static Expression BuildInExpression(Expression member, string csv, PropertyInfo property)
         {
             Type itemType = property.PropertyType;
-            object[] convertedValues = csv.Split(',')
-                                          .Select(v => Convert.ChangeType(v.Trim(), itemType))
-                                          .ToArray();
+            object?[] convertedValues = csv.Split(',')
+                                           .Select(v => v.Trim())
+                                           .Where(v => v.Length > 0)
+                                           .Select(v => ConvertScalar(v, itemType))
+                                           .ToArray();
+
+            if (convertedValues.Length == 0)
+                throw new ArgumentException($"Nenhum valor válido informado para o operador 'in' da propriedade '{property.Name}'.");
 
             var typedArray = Array.CreateInstance(itemType, convertedValues.Length);
-            convertedValues.CopyTo(typedArray, 0);
+            for (int i = 0; i < convertedValues.Length; i++)
+                typedArray.SetValue(convertedValues[i], i);
 
             MethodInfo containsMethod = typeof(Enumerable)
                                        .GetMethods(BindingFlags.Static | BindingFlags.Public)
