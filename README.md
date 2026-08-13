@@ -379,6 +379,81 @@ public class PageMeta
 }
 ```
 
+## Filtros compostos via JSON (OR, agrupamento e NOT)
+
+Até aqui, tanto a query string (`campo__operador=valor`) quanto `QueryFilter` só combinam condições por `AND` — não há como expressar "nome contém X **ou** preço maior que Y" nesses dois formatos. Para isso, `QuerySpec<T>` e `RequestQuery` têm uma propriedade adicional, `Filter`, do tipo `FilterNode?` (`Queryable.Filtering`), que aceita uma árvore de filtro composto vinda de um corpo JSON: `OR`, agrupamento arbitrário e `NOT`.
+
+`FilterNode` é uma hierarquia de records abstrata com três implementações:
+
+| Tipo | Campos | Significado |
+| --- | --- | --- |
+| `FilterCondition` | `Field`, `Operator`, `Value` | Condição folha — mesma semântica de `campo__operador=valor`. |
+| `FilterGroup` | `Logic` (`And`/`Or`), `Children` | Agrupamento de nós filhos, combinados pelo operador lógico indicado. |
+| `FilterNot` | `Inner` | Negação lógica do nó interno. |
+
+A desserialização é feita por `FilterNodeJsonConverter`, já anotado em `FilterNode` via `[JsonConverter(typeof(FilterNodeJsonConverter))]` — não é preciso registrar nada em `JsonSerializerOptions`, o `System.Text.Json.JsonSerializer` padrão já resolve. O polimorfismo é decidido **por presença de campo no objeto JSON, sem discriminador de tipo (`$type`)**:
+
+- objeto com `field` ⇒ `FilterCondition`;
+- objeto com `logic` + `children` ⇒ `FilterGroup`;
+- objeto com `not` ⇒ `FilterNot`.
+
+Outras regras do conversor:
+
+- `operator` ausente (ou vazio) numa condição assume `"eq"` — mesmo padrão do dicionário.
+- Nomes de propriedade JSON (`field`, `operator`, `value`, `logic`, `children`, `not`) e o valor de `logic` (`"and"`/`"or"`) são case-insensitive.
+- Uma condição folha na raiz do body — `{ "field": ..., "value": ... }`, sem `logic` em volta — é aceita diretamente, sem precisar embrulhá-la num grupo.
+
+Os operadores aceitos dentro de `operator` são os mesmos já documentados na tabela de [Sintaxe da query string](#sintaxe-da-query-string): `eq`, `neq`, `gt`, `lt`, `gte`, `lte`, `contains` (só `string`) e `in`.
+
+Exemplo de corpo de requisição — produtos cujo nome contenha "notebook" **ou** (preço ≥ 100 **e** ativos), usando o domínio `Produto`/`Categoria` já apresentado acima:
+
+```json
+{
+  "logic": "or",
+  "children": [
+    { "field": "nome", "operator": "contains", "value": "notebook" },
+    {
+      "logic": "and",
+      "children": [
+        { "field": "preco", "operator": "gte", "value": "100" },
+        { "field": "ativo", "value": "true" }
+      ]
+    }
+  ]
+}
+```
+
+Um controller que recebe `RequestQuery` no corpo (POST, em vez de `[FromQuery]`) repassa o `Filter` normalmente — `ToQuerySpec<T>()` copia a árvore para `QuerySpec<T>.Filter` sem tratamento especial:
+
+```csharp
+using Microsoft.AspNetCore.Mvc;
+using Queryable.Core;
+using Queryable.EntityFrameworkCore.Interfaces;
+
+[ApiController]
+[Route("api/produtos")]
+public class ProdutosController(AppDbContext context, IPagedQueryService pagedQueryService) : ControllerBase
+{
+    [HttpPost("buscar")]
+    public async Task<ActionResult<PagedResult<ProdutoDto>>> Buscar(
+        [FromBody] RequestQuery request,
+        CancellationToken ct)
+    {
+        PagedResult<ProdutoDto> result = await pagedQueryService.ApplyFilterPaginatedAsync(
+            context.Set<Produto>(),
+            request,
+            p => new ProdutoDto { Id = p.Id, Nome = p.Nome, Preco = p.Preco },
+            ct: ct);
+
+        return Ok(result);
+    }
+}
+```
+
+**Regra de combinação com `Filters`/`QueryFilter`:** se `Filter` for nulo, nada muda — só o dicionário (`Filters`) é considerado, exatamente como antes desta funcionalidade existir. Se os dois vierem preenchidos ao mesmo tempo, o predicado final é o `AND` dos dois conjuntos de condições (`AND(Filters, Filter)`) — um nunca sobrescreve o outro. Isso é resolvido por `IFilterBuilder.BuildPredicate<T>(IDictionary<string, string>, FilterNode?)`, chamado internamente por `QuerySpecApplier.Apply`.
+
+> A combinação por `OR`/agrupamento/`NOT` só existe para quem envia a árvore via `Filter`. Pela query string tradicional (`campo__operador=valor`) e por `QueryFilter`, a combinação continua sendo exclusivamente por `AND` — uma mini-linguagem para expressar `OR`/`NOT` na própria query string é etapa futura, ainda não implementada.
+
 ## Limitações e armadilhas conhecidas
 
 - **Navegação bidirecional é segura; coleções não são navegáveis; há teto de profundidade.** `PathExtension.BuildPropertyPaths<T>` tem três guardas contra o mapeamento explodir: (1) **guarda de coleção** — uma propriedade cujo tipo implementa `IEnumerable` (e não é `string`) continua entrando no mapa de aliases, mas a recursão não desce dentro dela; isso elimina o vetor clássico de recursão infinita em navegação bidirecional de EF Core (`Produto.Categoria` / `Categoria.Produtos`) e também os aliases lixo que antes vinham de `List<T>` (`.capacity`, `.count`, `.item`); (2) **guarda de ciclo por caminho** — um tipo já presente no caminho atual não é reentrado, mas isso vale só por caminho, não globalmente, de propósito: ramos irmãos do mesmo tipo (ex.: `Pedido.EnderecoEntrega` e `Pedido.EnderecoCobranca`, ambos `Endereco`) continuam os dois mapeados; (3) **limite de profundidade** — `MaxDepth = 5` níveis de aninhamento, além disso o mapeamento simplesmente para de descer. Na prática, isso significa que `Produto.Categoria` e `Categoria.Produtos` coexistindo não quebra mais nada, mas também que não dá para filtrar *através* de uma coleção (`categoria.produtos.nome` não é endereçável — só o que estiver até 5 níveis de navegação simples de profundidade).
