@@ -14,8 +14,6 @@ namespace Queryable.Builders
         // diretamente (fora do container de DI).
         private static readonly IPropertyPathProvider DefaultPathProvider = new ReflectionPropertyPathProvider();
 
-        private static readonly string[] SupportedOperators = ["eq", "gt", "lt", "gte", "lte", "contains", "in", "neq"];
-
         private readonly IPropertyPathProvider _pathProvider;
 
         public FilterBuilder() : this(DefaultPathProvider)
@@ -174,13 +172,15 @@ namespace Queryable.Builders
 
         private static (string field, string op) ParseKey(string rawKey)
         {
-            foreach (string op in SupportedOperators.OrderByDescending(o => o.Length))
+            // FilterOperators.All já vem ordenado por comprimento decrescente — ver o comentário
+            // da classe. Preserva o casamento de "gte" antes de "gt" no sufixo __operador.
+            foreach (string op in FilterOperators.All)
             {
                 if (rawKey.EndsWith($"__{op}", StringComparison.OrdinalIgnoreCase))
                     return (rawKey[..^$"__{op}".Length], op);
             }
 
-            return (rawKey.ToLowerInvariant(), "eq");
+            return (rawKey.ToLowerInvariant(), FilterOperators.Default);
         }
 
         /// <summary>
