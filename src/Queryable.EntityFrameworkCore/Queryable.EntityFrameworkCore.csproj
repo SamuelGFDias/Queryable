@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <IsPackable>true</IsPackable>
+    <PackageId>Queryable.DynamicFilter.EntityFrameworkCore</PackageId>
+    <Title>Queryable.DynamicFilter.EntityFrameworkCore</Title>
+    <Description>Integração Entity Framework Core para o Queryable.DynamicFilter: paginação assíncrona com projeção para DTO.</Description>
+    <Authors>samueldias21</Authors>
+    <PackageTags>aspnetcore filters querystring linq expression api efcore</PackageTags>
+    <PackageProjectUrl>https://github.com/SamuelGFDias/Queryable</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/SamuelGFDias/Queryable</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+  </PropertyGroup>
+  <!-- Versao vem da tag git (v*) via MinVer; em Debug o MinVer e ignorado. -->
+  <PropertyGroup>
+    <MinVerSkip Condition="'$(Configuration)' == 'Debug'">true</MinVerSkip>
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="MinVer" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Queryable\Queryable.csproj" />
+  </ItemGroup>
+</Project>
