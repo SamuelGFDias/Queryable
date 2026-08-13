@@ -24,6 +24,12 @@ public static class ServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        // Singleton de propósito: o mapa de caminhos resolvido por IPropertyPathProvider
+        // depende só do Type de T, que não muda em tempo de execução. Registrar como Scoped
+        // recriaria o cache a cada requisição, anulando o ganho de performance que o provider
+        // existe para trazer — o cache só compensa quando é compartilhado entre requisições.
+        services.TryAddSingleton<IPropertyPathProvider, ReflectionPropertyPathProvider>();
+
         services.TryAddScoped<IFilterBuilder, FilterBuilder>();
         services.TryAddScoped<ISortBuilder, SortBuilder>();
         services.TryAddScoped<IQuerySpecApplier, QuerySpecApplier>();

@@ -8,7 +8,24 @@ namespace Queryable.Builders
 {
     public class FilterBuilder : IFilterBuilder
     {
+        // Instância padrão compartilhada, usada pelo construtor sem parâmetros, para que o
+        // cache do provider também valha para consumidores que instanciam FilterBuilder
+        // diretamente (fora do container de DI).
+        private static readonly IPropertyPathProvider DefaultPathProvider = new ReflectionPropertyPathProvider();
+
         private static readonly string[] SupportedOperators = ["eq", "gt", "lt", "gte", "lte", "contains", "in", "neq"];
+
+        private readonly IPropertyPathProvider _pathProvider;
+
+        public FilterBuilder() : this(DefaultPathProvider)
+        {
+        }
+
+        public FilterBuilder(IPropertyPathProvider pathProvider)
+        {
+            ArgumentNullException.ThrowIfNull(pathProvider);
+            _pathProvider = pathProvider;
+        }
 
         public Expression<Func<T, bool>> BuildPredicate<T>(IDictionary<string, string> queryParams)
         {
@@ -16,7 +33,7 @@ namespace Queryable.Builders
             Expression? finalExpr = null;
 
             // Mapeia alias para cadeia de propriedades (path)
-            Dictionary<string, List<PropertyInfo>> properties = PathExtension.BuildPropertyPaths<T>();
+            IReadOnlyDictionary<string, List<PropertyInfo>> properties = _pathProvider.GetPaths<T>();
 
             foreach (var (rawKey, value) in queryParams)
             {

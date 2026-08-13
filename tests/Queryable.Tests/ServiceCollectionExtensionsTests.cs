@@ -33,6 +33,19 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddQueryableDynamicFilter_RegistraIPropertyPathProviderComoSingleton()
+    {
+        IServiceCollection services = new ServiceCollection();
+
+        services.AddQueryableDynamicFilter();
+
+        Assert.Contains(services, d =>
+            d.ServiceType == typeof(IPropertyPathProvider)
+         && d.Lifetime == ServiceLifetime.Singleton
+         && d.ImplementationType == typeof(ReflectionPropertyPathProvider));
+    }
+
+    [Fact]
     public void AddQueryableDynamicFilter_ServicosResolvemDeUmServiceProvider()
     {
         IServiceCollection services = new ServiceCollection();
@@ -87,5 +100,21 @@ public class ServiceCollectionExtensionsTests
         IFilterBuilder instanciaEscopo3 = escopo3.ServiceProvider.GetRequiredService<IFilterBuilder>();
 
         Assert.NotSame(instanciaEscopo2, instanciaEscopo3);
+    }
+
+    [Fact]
+    public void AddQueryableDynamicFilter_Singleton_MesmaInstanciaEntreEscoposDiferentes()
+    {
+        IServiceCollection services = new ServiceCollection();
+        services.AddQueryableDynamicFilter();
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        using IServiceScope escopo1 = provider.CreateScope();
+        using IServiceScope escopo2 = provider.CreateScope();
+
+        IPropertyPathProvider instanciaEscopo1 = escopo1.ServiceProvider.GetRequiredService<IPropertyPathProvider>();
+        IPropertyPathProvider instanciaEscopo2 = escopo2.ServiceProvider.GetRequiredService<IPropertyPathProvider>();
+
+        Assert.Same(instanciaEscopo1, instanciaEscopo2);
     }
 }
