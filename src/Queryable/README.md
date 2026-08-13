@@ -1,11 +1,14 @@
 # Queryable.DynamicFilter
 
+[![NuGet](https://img.shields.io/nuget/v/Queryable.DynamicFilter.svg)](https://www.nuget.org/packages/Queryable.DynamicFilter)
+[![Publish to NuGet](https://github.com/SamuelGFDias/Queryable/actions/workflows/publish.yml/badge.svg)](https://github.com/SamuelGFDias/Queryable/actions/workflows/publish.yml)
+
 Biblioteca para aplicar filtros dinâmicos, ordenação e paginação em `IQueryable<T>` no ASP.NET Core, com suporte a propriedades aninhadas e aliases via atributo.
 
 ## Instalação
 
 ```bash
-dotnet add package Queryable.DynamicFilter --version 10.0.0
+dotnet add package Queryable.DynamicFilter
 ```
 
 ## Como usar
