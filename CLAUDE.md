@@ -51,7 +51,7 @@ Pontos não óbvios do mapeamento:
 
 Outros comportamentos que dependem de ler mais de um arquivo:
 
-- `Apply` **sempre** ordena — sem `sort`, `SortBuilder` devolve `query.OrderBy(x => 0)`. Isso é o que torna `ApplyPaged` (`Skip`/`Take`) legítimo no provider. Não remova esse fallback.
+- `Apply` **sempre** ordena — sem `sort`, `SortBuilder` devolve `query.OrderBy(x => 0)`. Isso é o que torna `ApplyPaged` (`Skip`/`Take`) legítimo no provider. Não remova esse fallback. **Armadilha:** por ser `OrderBy` (não `ThenBy`), esse fallback descarta qualquer ordenação já aplicada à `query` antes de `Apply`/`ApplyFilterPaginatedAsync`; a ordenação padrão de uma listagem tem que ir dentro do `afterSpec` de `ApplyFilterPaginatedAsync` (que roda depois do `Apply` interno), e precisa ser condicional (`string.IsNullOrWhiteSpace(request.Sort) ? q.OrderBy(...) : q`) para não sobrescrever o `sort` pedido pelo cliente pelo mesmo motivo — ver `README.md`, seção "Armadilha: ordenação em `ApplyFilterPaginatedAsync`".
 - `ApplyPaged` **não** chama `Apply`. O chamador encadeia os dois na ordem `Apply` → `CountAsync` → `ApplyPaged`, porque o total tem que ser contado sobre o conjunto filtrado e não paginado.
 - `QuerySpec.Page`/`PageSize` ignoram atribuições `<= 0` no setter e mantêm o default (1 / 10). Não valide isso de novo na borda.
 - **Conversão de valores é única e compartilhada entre operadores.** `ConvertScalar` (privado, em `FilterBuilder.cs`) trata `Guid`, enums, `DateOnly`/`TimeOnly`, `Nullable<>` e o literal `"null"`, e é chamado tanto por `ConvertValue` (operadores escalares) quanto por `BuildInExpression` (`in`). Essa unificação existe justamente para as duas rotinas não voltarem a divergir — ao mexer em conversão de valor, mexa em `ConvertScalar`, nunca duplique lógica em um dos dois chamadores.
@@ -83,7 +83,7 @@ Regra crítica de separador em `QueryFilter`: usa `;` quando a string contém es
 - **Com projeção explícita**: `Expression<Func<TEntity, TDto>>` passado pelo chamador.
 - **Com `IProjectable`**: `TDto` implementa `IProjectable<TEntity, TDto>` e expõe a projeção como membro estático; resolve em tempo de compilação, sem reflexão.
 
-Por que `IProjectable` mora no núcleo e não no pacote EF? Porque um assembly de DTOs/Contracts pode declarar a projeção sem referenciar Entity Framework, permitindo compartilhamento com clientes que usam apenas o núcleo.
+Por que `IProjectable` mora no núcleo e não no pacote EF? Porque um assembly de DTOs/Contracts pode declarar a projeção sem referenciar Entity Framework, permitindo compartilhamento com clientes que usam apenas o núcleo. Isso resolve o acoplamento com EF, não com o domínio: implementar `IProjectable<TEntity, TDto>` fecha o genérico sobre a entidade e obriga o assembly de DTOs a referenciar o de domínio; quando isso não é aceitável (contratos isolados do domínio), a alternativa é declarar a projeção explícita (`Expression<Func<TEntity,TDto>>`) numa classe estática na camada de aplicação e usar a sobrecarga com `projection` explícita.
 
 `PagedQueryService` reutiliza `ApplyPaged` e `ToPagedResult` do núcleo em vez de reimplementar Skip/Take, respeita `SkipTotalCount` (omite `COUNT` quando `true`), e aplica `AsNoTracking` automaticamente.
 

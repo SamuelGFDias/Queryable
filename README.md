@@ -299,7 +299,27 @@ A consulta roda com `AsNoTracking` automaticamente. `afterSpec` é uma transform
 
 `SkipTotalCount` (em `RequestQuery` ou diretamente em `QuerySpec<T>`) pula o `CountAsync` e retorna `TotalCount = 0`. Vale usar em listagens de alto volume onde o `COUNT` é caro e o cliente não precisa saber o total (ex.: scroll infinito).
 
+### Armadilha: ordenação em `ApplyFilterPaginatedAsync`
+
+> **Isso custa horas de depuração se não for lido antes.** `QuerySpecApplier.Apply` (chamado internamente por `ApplyFilterPaginatedAsync`, antes de `afterSpec`) sempre termina em `SortBuilder.ApplySort`. Sem `sort` no `RequestQuery`/`QuerySpec<T>`, `ApplySort` devolve `query.OrderBy(x => 0)` — **`OrderBy`, não `ThenBy`.** `OrderBy` descarta qualquer ordenação já aplicada à `query` antes.
+
+Consequências práticas:
+
+1. **Ordenação aplicada à `query` antes de chamar `ApplyFilterPaginatedAsync` é silenciosamente descartada.** `context.Set<Produto>().OrderBy(p => p.Nome)` passado como `query` não sobrevive ao `Apply` interno — o `OrderBy(x => 0)` (ou o `OrderBy` do `sort` do cliente) substitui essa ordenação assim que não houver ordenação real vinda da query string.
+2. **A ordenação padrão da listagem precisa ser feita dentro do `afterSpec`**, que roda depois do `Apply` interno (filtro + ordenação) e antes da contagem/paginação.
+3. **Um `OrderBy` incondicional dentro de `afterSpec` sobrescreve o `sort` que o cliente pediu**, pelo mesmo motivo: `OrderBy` sempre descarta a ordenação anterior, inclusive a que veio de `sort` na query string. O padrão precisa ser condicional:
+
+```csharp
+afterSpec: q => string.IsNullOrWhiteSpace(request.Sort)
+    ? q.OrderByDescending(p => p.CriadoEm)
+    : q
+```
+
+4. **`IQuerySpecApplier.Apply` declara retorno `IQueryable<T>`, mas o valor devolvido em runtime é sempre um `IOrderedQueryable<T>`** (produzido por `ApplySort`). Por isso `afterSpec` recebe `IQueryable<T>` — não `IOrderedQueryable<T>` — e não dá para encadear `ThenBy` ali sem um cast explícito para `IOrderedQueryable<T>` primeiro.
+
 ## `IProjectable<TEntity, TSelf>` — projeção sem repetir a expressão
+
+> **Pré-requisito arquitetural: só use quando o assembly dos DTOs puder referenciar o assembly das entidades.** Implementar `IProjectable<TEntity, TSelf>` no DTO fecha o genérico sobre o tipo da entidade — `ProdutoDto : IProjectable<Produto, ProdutoDto>` obriga o assembly onde `ProdutoDto` mora a referenciar o assembly onde `Produto` mora. Em arquitetura em camadas com um projeto de contratos/DTOs deliberadamente isolado do domínio, isso quebra a fronteira — e a referência vaza transitivamente para tudo que consome esse projeto de contratos. Se esse é o seu caso, pule para a alternativa logo abaixo.
 
 Em vez de passar a expressão de projeção em cada chamada, o próprio DTO pode declará-la como membro estático:
 
@@ -335,7 +355,31 @@ PagedResult<ProdutoDto> result = await pagedQueryService.ApplyFilterPaginatedAsy
 
 Ganhos sobre um mapeamento resolvido em tempo de execução: `Projection` é um membro `static abstract` (C# 11+), então esquecer de implementá-lo é erro de compilação, não falha em runtime; não há reflexão (`Activator.CreateInstance`, varredura de `GetTypes()`) para descobrir o mapeamento; e, por ser uma `Expression` (não um `Func` já compilado), o provider do EF Core traduz o `Select` para SQL — apenas as colunas usadas pelo DTO trafegam do banco, sem materializar `Produto` inteiro antes de mapear.
 
+`IProjectable` fica declarado no pacote núcleo (`Queryable.DynamicFilter`), não no pacote de EF Core — então o assembly dos DTOs não precisa referenciar Entity Framework só para implementar a interface. Isso resolve o acoplamento com **EF Core**, mas é um eixo diferente do acoplamento com o **domínio**: `IProjectable<Produto, ProdutoDto>` ainda fecha o genérico sobre `Produto`, então o assembly do DTO referencia o assembly da entidade de qualquer forma, EF Core à parte — é exatamente o pré-requisito do início desta seção.
+
 > **Ambiguidade de sobrecarga:** existem duas sobrecargas de `ApplyFilterPaginatedAsync` com a mesma aridade — uma recebe `projection` explícita, outra usa `TDto.Projection` via `IProjectable`. Se você passar `afterSpec` posicionalmente como terceiro argumento (por exemplo, junto com `null` no lugar de uma projeção), o compilador pode não conseguir decidir entre as duas. Use sempre o argumento nomeado `afterSpec:` para desambiguar, como nos exemplos acima.
+
+### Alternativa sem acoplar o assembly dos DTOs ao domínio
+
+Quando o pré-requisito acima não se aplica — DTOs vivem num projeto de contratos que não pode referenciar o domínio —, declare a projeção como `Expression<Func<TEntity, TDto>>` numa classe estática na camada que já referencia os dois lados (tipicamente a camada de aplicação/API) e use a sobrecarga de `ApplyFilterPaginatedAsync` com `projection` explícita, que já existe hoje e é o mesmo caminho usado no exemplo de [`ApplyFilterPaginatedAsync` com projeção explícita](#applyfilterpaginatedasync-com-projeção-explícita):
+
+```csharp
+public static class ProdutoProjections
+{
+    public static Expression<Func<Produto, ProdutoDto>> ToDto =>
+        p => new ProdutoDto { Id = p.Id, Nome = p.Nome, Preco = p.Preco };
+}
+```
+
+```csharp
+PagedResult<ProdutoDto> result = await pagedQueryService.ApplyFilterPaginatedAsync(
+    context.Set<Produto>(),
+    request,
+    ProdutoProjections.ToDto,
+    ct: ct);
+```
+
+Não se perde a garantia do compilador que o `IProjectable` dá — ela só muda de lugar: `projection` é parâmetro **obrigatório** nessa sobrecarga (sem overload que o dispense), então esquecer de passá-lo continua sendo erro de compilação. A diferença é só onde a cobrança mora: na declaração do DTO (`IProjectable`) ou no ponto de chamada (projeção explícita).
 
 ## Formato da resposta
 
@@ -518,6 +562,7 @@ Qualquer erro de sintaxe (parêntese ou aspas não fechados, palavra-chave sem a
 - **`contains` só é suportado em `string`.** Usar `contains` em qualquer outra propriedade lança `NotSupportedException`.
 - **`Page` e `PageSize` ignoram valores `<= 0` silenciosamente**, mantendo o valor anterior (`Page` default `1`, `PageSize` default `10`) em vez de lançar erro — vale em `QuerySpec<T>` e, por consequência, em `RequestQuery.ToQuerySpec<T>()`.
 - **Sem `sort` explícito, `SortBuilder` aplica `OrderBy(x => 0)`.** Isso garante que `Skip`/`Take` sejam avaliados de forma determinística pelo provider LINQ, mas não implica ordem estável entre páginas no banco — se os dados mudam entre duas requisições paginadas sem ordenação real, o mesmo item pode aparecer em páginas diferentes ou ser pulado.
+- **Esse mesmo `OrderBy(x => 0)` descarta qualquer ordenação aplicada à `query` antes de `ApplyFilterPaginatedAsync`, e um `OrderBy` incondicional em `afterSpec` sobrescreve o `sort` do cliente pelo mesmo motivo** — ver [Armadilha: ordenação em `ApplyFilterPaginatedAsync`](#armadilha-ordenação-em-applyfilterpaginatedasync) para o padrão correto (ordenação padrão condicional dentro do `afterSpec`).
 - **Chave de filtro ou campo de ordenação desconhecido lança `ArgumentException`** (`"Campo 'X' não é pesquisável."` para filtro; mensagem equivalente para ordenação). Uma query string malformada ou com campo inexistente vira uma exceção não tratada — sem um middleware/filtro de exceção global, isso retorna 500 ao cliente em vez de 400.
 - **`QueryFilter` malformado também lança `ArgumentException`** — um item sem `=` (ex.: `"ativo"`) ou com chave vazia (ex.: `"=true"`) invalida a requisição inteira.
 
