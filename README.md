@@ -152,6 +152,29 @@ public class ProdutoQueryConfiguration : QueryableConfiguration<Produto>
 
 As chamadas a `For(...)`, `Ignore(...)` e `OnlyMapped()` devem ocorrer no construtor da classe derivada — a configuração roda uma única vez, na inicialização da aplicação.
 
+### Filtrar ou ordenar pela quantidade de itens de uma coleção
+
+Uma propriedade de coleção (`Categoria.Produtos`) não é filtrável nem ordenável diretamente — ver [Limitações e armadilhas conhecidas](#limitações-e-armadilhas-conhecidas). Mas é possível filtrar ou ordenar pela **quantidade** de itens, mapeando `Count` como se fosse uma propriedade escalar comum:
+
+```csharp
+public class CategoriaQueryConfiguration : QueryableConfiguration<Categoria>
+{
+    public CategoriaQueryConfiguration()
+    {
+        For(c => c.Produtos.Count).As("qtd_produtos");
+    }
+}
+```
+
+```
+GET /api/categorias?qtd_produtos__gte=2
+GET /api/categorias?sort=-qtd_produtos
+```
+
+Isso funciona porque `Count` é uma propriedade (de `ICollection<T>`), não uma chamada de método — o extrator de caminhos aceita cadeia de propriedades normalmente, sem tratamento especial. Contra o pacote EF Core, a expressão resultante é traduzida para SQL como uma subconsulta correlacionada (`SELECT COUNT(*) FROM Produtos WHERE ...`); o comportamento está coberto contra SQLite in-memory em `tests/Queryable.EntityFrameworkCore.Tests/ColecaoTests.cs` e, para a árvore de expressão em memória, em `tests/Queryable.Tests/ColecaoTests.cs`.
+
+Este é o **único** recurso de coleção suportado hoje. `For(c => c.Produtos.Any(p => p.Ativo))` é rejeitado pelo extrator de caminhos (`ArgumentException`, chamada de método não é uma cadeia de propriedades) — filtrar pelos itens de uma coleção (`any`/`all`) não existe ainda; ver a proposta em aberto `docs/proposta-quantificadores-colecao.md`.
+
 ### Registro no DI
 
 ```csharp
@@ -636,13 +659,13 @@ Quem consome o `FilterLimits` registrado no container: `QuerySpecModelBinder<T>.
 
 ## Limitações e armadilhas conhecidas
 
-- **Navegação bidirecional é segura; coleções não são navegáveis; há teto de profundidade.** `PathExtension.BuildPropertyPaths<T>` tem três guardas contra o mapeamento explodir: (1) **guarda de coleção** — uma propriedade cujo tipo implementa `IEnumerable` (e não é `string`) continua entrando no mapa de aliases, mas a recursão não desce dentro dela; isso elimina o vetor clássico de recursão infinita em navegação bidirecional de EF Core (`Produto.Categoria` / `Categoria.Produtos`) e também os aliases lixo que antes vinham de `List<T>` (`.capacity`, `.count`, `.item`); (2) **guarda de ciclo por caminho** — um tipo já presente no caminho atual não é reentrado, mas isso vale só por caminho, não globalmente, de propósito: ramos irmãos do mesmo tipo (ex.: `Pedido.EnderecoEntrega` e `Pedido.EnderecoCobranca`, ambos `Endereco`) continuam os dois mapeados; (3) **limite de profundidade** — `MaxDepth = 5` níveis de aninhamento, além disso o mapeamento simplesmente para de descer. Na prática, isso significa que `Produto.Categoria` e `Categoria.Produtos` coexistindo não quebra mais nada, mas também que não dá para filtrar *através* de uma coleção (`categoria.produtos.nome` não é endereçável — só o que estiver até 5 níveis de navegação simples de profundidade).
+- **Navegação bidirecional é segura; coleções não são navegáveis; há teto de profundidade.** `PathExtension.BuildPropertyPaths<T>` tem três guardas contra o mapeamento explodir: (1) **guarda de coleção** — uma propriedade cujo tipo implementa `IEnumerable` (e não é `string`) continua entrando no mapa de aliases, mas a recursão não desce dentro dela; isso elimina o vetor clássico de recursão infinita em navegação bidirecional de EF Core (`Produto.Categoria` / `Categoria.Produtos`) e também os aliases lixo que antes vinham de `List<T>` (`.capacity`, `.count`, `.item`); (2) **guarda de ciclo por caminho** — um tipo já presente no caminho atual não é reentrado, mas isso vale só por caminho, não globalmente, de propósito: ramos irmãos do mesmo tipo (ex.: `Pedido.EnderecoEntrega` e `Pedido.EnderecoCobranca`, ambos `Endereco`) continuam os dois mapeados; (3) **limite de profundidade** — `MaxDepth = 5` níveis de aninhamento, além disso o mapeamento simplesmente para de descer. Na prática, isso significa que `Produto.Categoria` e `Categoria.Produtos` coexistindo não quebra mais nada, mas também que não dá para filtrar *através* de uma coleção (`categoria.produtos.nome` não é endereçável — só o que estiver até 5 níveis de navegação simples de profundidade). Usar a própria propriedade de coleção diretamente em filtro ou ordenação (`?produtos=x`, `?sort=produtos`) lança `ArgumentException` com mensagem dedicada que aponta o caminho de saída — mapear `.Count` via configuração fluent (ver [Filtrar ou ordenar pela quantidade de itens de uma coleção](#filtrar-ou-ordenar-pela-quantidade-de-itens-de-uma-coleção)); antes disso era `InvalidCastException` (ou outro erro obscuro) em vez de um erro claro.
 - **O operador `in` usa a mesma conversão de valor dos demais operadores.** `BuildInExpression` (em `Builders/FilterBuilder.cs`) compartilha o conversor escalar usado por `ConvertValue`, então `Guid`, enum, `DateOnly`, `TimeOnly`, `Nullable<T>` e o literal `"null"` funcionam normalmente dentro de `in` — por exemplo `id__in=3fa85f64-5717-4562-b3fc-2c963f66afa6,7c9e6679-7425-40de-944b-e07fc1f90ae7` funciona. Duas coisas a saber: uma lista `in` sem nenhum item válido após o split lança `ArgumentException`; e itens vazios ou só com espaço em branco na lista são ignorados silenciosamente (`id__in=1,,2` equivale a `id__in=1,2`).
 - **`contains` só é suportado em `string`.** Usar `contains` em qualquer outra propriedade lança `NotSupportedException`.
 - **`Page` e `PageSize` ignoram valores `<= 0` silenciosamente**, mantendo o valor anterior (`Page` default `1`, `PageSize` default `10`) em vez de lançar erro — vale em `QuerySpec<T>` e, por consequência, em `RequestQuery.ToQuerySpec<T>()`. É decisão de design (clamp de paginação): `?page=0` e `?page=-5` devolvem a página 1 com 200, sem sinal de que o parâmetro foi ignorado; se a sua API precisa de 400 nesse caso, valide `Page`/`PageSize` antes de chamar a biblioteca. O teto superior de `PageSize`, por outro lado, **é** erro: `FilterLimits.MaxPageSize` (default 1000) — ver [Limites de segurança](#limites-de-segurança-de-filtros-compostos).
 - **Sem `sort` explícito, `SortBuilder` aplica `OrderBy(x => 0)`.** Isso garante que `Skip`/`Take` sejam avaliados de forma determinística pelo provider LINQ, mas não implica ordem estável entre páginas no banco — se os dados mudam entre duas requisições paginadas sem ordenação real, o mesmo item pode aparecer em páginas diferentes ou ser pulado.
 - **Esse mesmo `OrderBy(x => 0)` descarta qualquer ordenação aplicada à `query` antes de `ApplyFilterPaginatedAsync`, e um `OrderBy` incondicional em `afterSpec` sobrescreve o `sort` do cliente pelo mesmo motivo** — ver [Armadilha: ordenação em `ApplyFilterPaginatedAsync`](#armadilha-ordenação-em-applyfilterpaginatedasync) para o padrão correto (ordenação padrão condicional dentro do `afterSpec`).
-- **Chave de filtro ou campo de ordenação desconhecido lança `ArgumentException`** (`"Campo 'X' não é pesquisável."` para filtro; mensagem equivalente para ordenação). Uma query string malformada ou com campo inexistente vira uma exceção não tratada — sem um middleware/filtro de exceção global, isso retorna 500 ao cliente em vez de 400.
+- **Chave de filtro ou campo de ordenação desconhecido lança `ArgumentException`** (`"Campo 'X' não é pesquisável."` para filtro; mensagem equivalente para ordenação). Uma query string malformada ou com campo inexistente vira uma exceção não tratada — sem um middleware/filtro de exceção global, isso retorna 500 ao cliente em vez de 400. O mesmo tratamento cobre usar uma coleção diretamente em filtro ou ordenação: também lança `ArgumentException` (mensagem própria, apontando para `.Count` via configuração fluent), então um único `catch` na borda HTTP resolve os dois casos.
 - **`QueryFilter` malformado também lança `ArgumentException`** — um item sem `=` (ex.: `"ativo"`) ou com chave vazia (ex.: `"=true"`) invalida a requisição inteira.
 
 ## Testes
