@@ -35,21 +35,48 @@ namespace Queryable.Filtering;
 /// desserializado diretamente pelo model binder de JSON do ASP.NET Core, sem passar por nenhum
 /// dos dois.
 /// <para>
-/// <b>Limitação conhecida e deliberada:</b> <see cref="JsonConverter{T}"/> não recebe
-/// <see cref="IServiceProvider"/> do <c>System.Text.Json</c>, então esta validação sempre usa
-/// <see cref="FilterLimits.Default"/> — os limites configurados via
-/// <c>AddQueryableDynamicFilter(Action&lt;FilterLimits&gt;)</c> no container de DI não chegam
-/// até aqui. Ver a documentação de <see cref="FilterLimits.Default"/>.
+/// <b>Quais limites valem aqui.</b> <see cref="JsonConverter{T}"/> não recebe
+/// <see cref="IServiceProvider"/> do <c>System.Text.Json</c>, então a instância criada pelo
+/// atributo <c>[JsonConverter]</c> de <see cref="FilterNode"/> (construtor sem argumentos) valida
+/// contra <see cref="FilterLimits.Default"/>. Para que os limites configurados via
+/// <c>AddQueryableDynamicFilter(Action&lt;FilterLimits&gt;)</c> cheguem à porta JSON, registre
+/// uma instância construída com esses limites em <see cref="JsonSerializerOptions.Converters"/>
+/// — o <c>System.Text.Json</c> dá precedência a um conversor registrado nas opções sobre o
+/// atributo do tipo. O helper
+/// <see cref="Queryable.Extensions.JsonSerializerOptionsExtensions.AddQueryableFilterLimits"/>
+/// faz exatamente isso; o README mostra como ligá-lo às <c>JsonOptions</c> do MVC e da Minimal API.
 /// </para>
 /// </remarks>
 public sealed class FilterNodeJsonConverter : JsonConverter<FilterNode>
 {
+    private readonly FilterLimits _limits;
+
+    /// <summary>
+    /// Construtor sem argumentos, exigido pelo <c>System.Text.Json</c> para instanciar o
+    /// conversor a partir do atributo <c>[JsonConverter]</c> em <see cref="FilterNode"/>. Um
+    /// construtor primário com parâmetro opcional <b>não</b> serve: em IL ele é um construtor de
+    /// um parâmetro, e o <c>System.Text.Json</c> falha com "does not have a public parameterless
+    /// constructor". Usa <see cref="FilterLimits.Default"/>.
+    /// </summary>
+    public FilterNodeJsonConverter() : this(null) { }
+
+    /// <param name="limits">
+    /// Tetos a aplicar em <see cref="Read"/>. Quando <c>null</c>, usa <see cref="FilterLimits.Default"/>.
+    /// </param>
+    public FilterNodeJsonConverter(FilterLimits? limits)
+    {
+        _limits = limits ?? FilterLimits.Default;
+    }
+
+    /// <summary>Tetos efetivamente aplicados por este conversor.</summary>
+    public FilterLimits Limits => _limits;
+
     public override FilterNode Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         using JsonDocument document = JsonDocument.ParseValue(ref reader);
         FilterNode node = ReadNode(document.RootElement);
 
-        FilterLimitValidator.Validate(node);
+        FilterLimitValidator.Validate(node, _limits);
 
         return node;
     }

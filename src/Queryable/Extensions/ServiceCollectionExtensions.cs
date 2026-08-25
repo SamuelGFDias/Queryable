@@ -75,10 +75,12 @@ public static class ServiceCollectionExtensions
     /// <c>AddQueryableDynamicFilterEfCore()</c>: o registro usa <c>TryAddSingleton</c>, então se
     /// o pacote EF Core já tiver registrado a instância padrão, esta configuração é ignorada
     /// silenciosamente. Não afeta <see cref="FilterLimits.Default"/> — código
-    /// estático sem acesso a DI (a porta JSON via <see cref="Queryable.Filtering.FilterNodeJsonConverter"/>,
-    /// ou uma chamada direta a <c>FilterExpressionParser.Parse</c> fora de um binder) continua
-    /// validando contra os defaults, independentemente desta configuração (ver a documentação de
-    /// <see cref="FilterLimits.Default"/>).
+    /// estático sem acesso a DI (uma chamada direta a <c>FilterExpressionParser.Parse</c> fora de
+    /// um binder) continua validando contra os defaults. A porta JSON
+    /// (<see cref="Queryable.Filtering.FilterNodeJsonConverter"/>) também usa os defaults, a menos
+    /// que o conversor seja registrado nas <c>JsonSerializerOptions</c> com os limites
+    /// configurados via <see cref="JsonSerializerOptionsExtensions.AddQueryableFilterLimits"/>
+    /// (ver a documentação de <see cref="FilterLimits.Default"/>).
     /// </remarks>
     /// <param name="services">A coleção de serviços onde os serviços serão registrados.</param>
     /// <param name="configure">Callback que ajusta os campos de uma <see cref="FilterLimits"/> nova, com os defaults como ponto de partida.</param>
