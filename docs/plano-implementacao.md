@@ -312,6 +312,116 @@ validação comprovadamente ocorre antes de qualquer tentativa de compilação p
 
 ---
 
+### Etapa 7 — Limites completos (issues #7 e #9)
+
+| | |
+|---|---|
+| **Versão alvo** | `v10.9.0` |
+| **Depende de** | Etapa 6 (e do patch `v10.8.1`, issue #6) |
+| **Risco para o consumidor** | aditivo; `MaxPageSize` (default 1000) passa a rejeitar com 400 páginas maiores que o teto — quem depende de `PageSize` acima disso precisa configurar |
+
+**Objetivo.** Fechar as duas lacunas restantes dos limites de segurança da Etapa 6: os limites
+configurados via DI não chegavam ao `FilterNodeJsonConverter` (issue #7) e o volume da página não
+tinha teto (issue #9).
+
+**Conteúdo.** `FilterNodeJsonConverter` ganha construtor `FilterNodeJsonConverter(FilterLimits?)`;
+o atributo `[JsonConverter]` em `FilterNode` continua usando o construtor sem argumentos (defaults).
+Novo helper `JsonSerializerOptions.AddQueryableFilterLimits(FilterLimits)` registra a instância
+configurada em `Converters` — que, pela precedência do `System.Text.Json`, vence o atributo de tipo.
+O núcleo não referencia `Microsoft.AspNetCore.App`, então o registro nas `JsonOptions` do MVC /
+Minimal API é feito pelo consumidor com uma linha documentada no README. `FilterLimits.MaxPageSize`
+(1000) e `FilterLimitKind.MaxPageSize`, validados em `FilterLimitValidator.ValidatePageSize` nos
+mesmos três pontos que já resolvem `FilterLimits` do DI (`QuerySpecModelBinder<T>.BuildSpec`,
+`RequestQueryExtensions.ToQuerySpec<T>`, `PagedQueryService`). O clamp de `Page`/`PageSize <= 0`
+é mantido (decisão: retrocompatível) e passa a estar documentado no XML das propriedades.
+
+**Critério de pronto.** Teste provando que uma árvore JSON acima do limite configurado e abaixo do
+default é rejeitada quando o helper está registrado, e aceita sem ele; `PageSize` acima de
+`MaxPageSize` vira `FilterLimitExceededException` nas três origens (binder → `ModelState`
+inválido); documentação do converter, de `FilterLimits.Default` e do README deixa de afirmar que a
+limitação é intransponível.
+
+---
+
+### Etapa 8 — Igualdade estrutural de `FilterGroup` (issue #1)
+
+| | |
+|---|---|
+| **Versão alvo** | `v10.10.0` |
+| **Depende de** | Etapa 2 |
+| **Risco para o consumidor** | muda a semântica de `Equals`/`GetHashCode` de um record já publicado — de referência nos filhos para valor; só afeta quem comparava árvores e dependia do resultado `false` |
+
+**Objetivo.** Fazer `FilterGroup` cumprir o contrato de valor que `record` promete: hoje
+`Children` (`IReadOnlyList<FilterNode>`) compara por referência, então duas árvores idênticas
+são "diferentes" e não servem como chave de dicionário.
+
+**Conteúdo.** `FilterGroup` sobrescreve `Equals(FilterGroup?)` (mesmo `Logic` +
+`Children.SequenceEqual`) e `GetHashCode()` (combinando `Logic` e o hash de cada filho); o tipo de
+`Children` não muda. O helper `AssertEquivalent` de `FilterNodeJsonTests` é substituído por
+`Assert.Equal`, virando prova viva da igualdade.
+
+**Critério de pronto.** Testes de `==`/`Equals`/`GetHashCode` para árvores aninhadas (com
+`FilterNot`), ordem de filhos diferente ⇒ desigual, e uso como chave de `Dictionary`/`HashSet`.
+
+---
+
+### Etapa 9 — Coleções (issues #2, #3 e #4)
+
+| | |
+|---|---|
+| **Versão alvo** | `v10.11.0` |
+| **Depende de** | Etapa 3 |
+| **Risco para o consumidor** | filtro/ordenação por propriedade de coleção, que hoje falha com `InvalidCastException`/erro de reflexão (500), passa a falhar com `ArgumentException` clara (400 na borda) |
+
+**Objetivo.** Dar erro útil ao uso de coleção em filtro escalar (#2), documentar e proteger com
+teste o único recurso de coleção que existe — `For(c => c.Produtos.Count)` (#3) — e registrar em
+proposta o caminho para `any`/`all` (#4), sem implementá-lo.
+
+**Conteúdo.** Regra "é coleção" extraída de `PathExtension` para um helper interno compartilhado
+com `FilterBuilder.CompileCondition` e `SortBuilder.ApplySort`, que passam a lançar
+`ArgumentException` com mensagem dedicada apontando para `.Count` via configuração fluent; a
+propriedade **continua no mapa** (necessário para `any`/`all` no futuro). Modelo EF de teste ganha
+`Categoria.Produtos` para provar tradução SQL de `qtd_produtos__gte=2` e `sort=-qtd_produtos`.
+Novo `docs/proposta-quantificadores-colecao.md` (nó `FilterQuantifier`, sintaxe nas duas portas,
+resolução de caminhos relativa ao item, limites, `EXISTS`), no padrão das propostas existentes;
+issue #4 fica aberta apontando para o documento.
+
+**Critério de pronto.** Testes núcleo + EF (SQLite) para rejeição de coleção e para `.Count`;
+teste negativo fixando que `For(c => c.Produtos.Any(...))` continua lançando; README com a
+subseção de `.Count` e a limitação de `any`/`all` explícita; proposta escrita e referenciada em
+`CLAUDE.md`.
+
+---
+
+### Etapa 10 — Intenção do alias: filtro vs ordenação (issues #5 e #8)
+
+| | |
+|---|---|
+| **Versão alvo** | `v10.12.0` |
+| **Depende de** | Etapa 9 (só pelo modelo EF de teste com coleção) e Etapa 3 |
+| **Risco para o consumidor** | aditivo; `IPropertyPathProvider` ganha dois default interface methods; alias sem qualificador continua valendo para filtro e ordenação |
+
+**Objetivo.** Permitir declarar um alias só para filtro (`FilterOnly()`), só para ordenação
+(`SortOnly()`), e ordenar por expressão composta (`ForSort(p => p.NomeSocial ?? p.Nome)`), sem
+que ordenar obrigue a expor o campo em `WHERE` e vice-versa.
+
+**Conteúdo.** `[Flags] enum QueryableUsage { Filter, Sort, All }`; `QueryableConfiguration<T>`
+guarda usage por alias e um dicionário de `LambdaExpression` de ordenação;
+`ForSort<TKey>(Expression<Func<T,TKey>>)` é genérico em `TKey` de propósito, para não boxear em
+`object` (o `Convert` quebraria a tradução do `OrderBy` no EF). `IPropertyPathProvider` ganha
+`GetPaths<T>(QueryableUsage)` e `GetSortExpressions<T>()` como DIMs; o cache de
+`ReflectionPropertyPathProvider` passa a ser por `(Type, usage)`. `FilterBuilder` pede `Filter`,
+`SortBuilder` pede `Sort` e consulta as expressões de ordenação antes do mapa de caminhos.
+Mensagens de erro não revelam o outro uso (alias `FilterOnly` em `sort=` dá o mesmo "não
+encontrado" de campo inexistente).
+
+**Critério de pronto.** Os quatro cenários de aceite/rejeição (`FilterOnly` em sort, `SortOnly`
+em filtro e os inversos) em teste; `ForSort` com `??` traduzido para SQL no SQLite, asc e desc,
+combinado com `ThenBy` de alias normal; implementação externa mínima de `IPropertyPathProvider`
+(só `GetPaths<T>()`) continua compilando e funcionando.
+
+---
+
 ## 4. Grafo de dependências
 
 ```
@@ -322,8 +432,17 @@ Etapa 0 ──► Etapa 1 ──► Etapa 2 ──┬──► Etapa 3
                                    │    (v10.6.0) │
                                    │               ├──► Etapa 6
                                    └──► Etapa 5 ──┘    (v10.8.0)
-                                        (v10.7.0)
+                                        (v10.7.0)          │
+                                                           ▼
+                        Etapa 7 (v10.9.0) ──► Etapa 8 (v10.10.0) ──► Etapa 9 (v10.11.0) ──► Etapa 10 (v10.12.0)
 ```
+
+**Etapas 7 a 10 (issues do GitHub, pós-`v10.8.1`).** A ordem é de prioridade, não de dependência
+estrita: a 7 (segurança) vem primeiro; 8 e 9 dependem só de etapas já publicadas e poderiam
+correr em paralelo em worktrees (arquivos disjuntos: `FilterNode.cs` vs
+`FilterBuilder.cs`/`SortBuilder.cs`/`PathExtension.cs`); a 10 depende da 9 apenas pelo modelo EF
+de teste com coleção. Como cada uma fecha com release própria, publicar em sequência é o mais
+simples.
 
 **Caminho crítico:** `0 → 1 → 2 → (3 ∥ 4) → 5 → 6`. Em termos de dependência estrita, o que a
 Etapa 6 exige é `4` e `5` prontas; a Etapa 3 depende só de `1` e não bloqueia nem é bloqueada por
@@ -420,7 +539,7 @@ esse arquivo; se a implementação real mostrar que toca, o par vira sequencial)
   publicada, aparecer um bug no compilador de árvore, a correção é uma tag `v10.4.1`, não uma
   reabertura da Etapa 2 nem uma alteração retroativa no plano — o número de etapa e a versão minor
   correspondente já são história publicada.
-- A numeração de minor deste plano (`10.2.0` a `10.8.0`) assume que nenhuma etapa introduz
+- A numeração de minor deste plano (`10.2.0` a `10.12.0`) assume que nenhuma etapa introduz
   mudança que exigiria major sob SemVer (nenhuma remove ou quebra um membro público existente,
   conforme as tabelas de compatibilidade das duas propostas — seção 6 da proposta A, seção 9 da
   proposta B). Se, na implementação real de alguma etapa, uma decisão em aberto (seção 8 deste

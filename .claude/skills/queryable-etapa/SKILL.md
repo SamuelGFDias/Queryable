@@ -7,7 +7,7 @@ description: Use ao implementar uma etapa do docs/plano-implementacao.md neste r
 
 ## Ponto de partida
 
-`docs/plano-implementacao.md` tem as etapas 0 a 6, cada uma com versão alvo, dependências e critério de pronto. Leia a etapa alvo ANTES de planejar. As propostas que originam as etapas estão em `docs/proposta-filtros-compostos.md` e `docs/proposta-configuracao-fluent.md`.
+`docs/plano-implementacao.md` tem as etapas 0 a 10, cada uma com versão alvo, dependências e critério de pronto. Leia a etapa alvo ANTES de planejar. As propostas que originam as etapas estão em `docs/proposta-filtros-compostos.md` e `docs/proposta-configuracao-fluent.md`.
 
 As propostas costumam ter uma seção de "questões em aberto" — são decisões de API pública. Levante-as e pergunte todas de uma vez, antes de começar a implementar, em vez de travar no meio da etapa. Exemplo real: na etapa 3, decidir antecipadamente que `OnlyMapped()` seria explícito e que os aliases automáticos continuariam coexistindo com os configurados definiu a implementação inteira, e as duas decisões juntas transformaram uma mudança arriscada em adoção incremental.
 
