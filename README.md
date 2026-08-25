@@ -435,6 +435,8 @@ Até aqui, tanto a query string (`campo__operador=valor`) quanto `QueryFilter` s
 | `FilterGroup` | `Logic` (`And`/`Or`), `Children` | Agrupamento de nós filhos, combinados pelo operador lógico indicado. |
 | `FilterNot` | `Inner` | Negação lógica do nó interno. |
 
+Os três comparam **por valor, recursivamente** — inclusive `FilterGroup.Children`, elemento a elemento e na ordem (`[a, b]` ≠ `[b, a]`). Duas árvores construídas separadamente com o mesmo conteúdo são `==`, têm o mesmo `GetHashCode()` e servem como chave de `Dictionary`/`HashSet` (útil para cache de predicado compilado). Até `v10.9.0`, `Children` comparava por referência.
+
 A desserialização é feita por `FilterNodeJsonConverter`, já anotado em `FilterNode` via `[JsonConverter(typeof(FilterNodeJsonConverter))]` — não é preciso registrar nada em `JsonSerializerOptions`, o `System.Text.Json.JsonSerializer` padrão já resolve. O polimorfismo é decidido **por presença de campo no objeto JSON, sem discriminador de tipo (`$type`)**:
 
 - objeto com `field` ⇒ `FilterCondition`;
