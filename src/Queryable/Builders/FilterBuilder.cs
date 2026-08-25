@@ -204,11 +204,56 @@ namespace Queryable.Builders
             return baseType switch
             {
                 _ when baseType == typeof(Guid)     => Guid.Parse(value),
-                _ when baseType.IsEnum              => Enum.Parse(baseType, value, true),
+                _ when baseType.IsEnum              => ParseEnum(baseType, value),
                 _ when baseType == typeof(DateOnly) => DateOnly.Parse(value, CultureInfo.InvariantCulture),
                 _ when baseType == typeof(TimeOnly) => TimeOnly.Parse(value, CultureInfo.InvariantCulture),
                 _                                   => Convert.ChangeType(value, baseType, CultureInfo.InvariantCulture)
             };
+        }
+
+        /// <summary>
+        /// Converte para enum validando que o valor está definido (issue #10): <see cref="Enum.Parse(Type, string, bool)"/>
+        /// aceita qualquer forma numérica sem checar se ela corresponde a um membro, então
+        /// <c>situacao__eq=999</c> vira <c>(Enum)999</c> silenciosamente, a consulta roda e devolve 200 com lista
+        /// vazia em vez de um erro. Para enums <see cref="FlagsAttribute"/>, um valor composto (ex.: Read | Write)
+        /// é legítimo mesmo sem ser um membro nomeado — só é rejeitado se algum bit não corresponder a nenhum membro.
+        /// </summary>
+        private static object ParseEnum(Type enumType, string value)
+        {
+            object parsed;
+            try
+            {
+                parsed = Enum.Parse(enumType, value, ignoreCase: true);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new ArgumentException($"Valor '{value}' não é válido para o enum '{enumType.Name}'.", ex);
+            }
+
+            if (enumType.IsDefined(typeof(FlagsAttribute), inherit: false))
+            {
+                ulong bits = ToUInt64(parsed);
+                ulong mask = 0;
+                foreach (object member in Enum.GetValues(enumType))
+                    mask |= ToUInt64(member);
+
+                if ((bits & ~mask) != 0)
+                    throw new ArgumentException($"Valor '{value}' não é válido para o enum '{enumType.Name}'.");
+            }
+            else if (!Enum.IsDefined(enumType, parsed))
+            {
+                throw new ArgumentException($"Valor '{value}' não é válido para o enum '{enumType.Name}'.");
+            }
+
+            return parsed;
+
+            static ulong ToUInt64(object enumValue)
+            {
+                Type underlyingType = Enum.GetUnderlyingType(enumValue.GetType());
+                return underlyingType == typeof(ulong)
+                    ? Convert.ToUInt64(enumValue)
+                    : unchecked((ulong)Convert.ToInt64(enumValue));
+            }
         }
 
         private static Expression ConvertValue(string value, PropertyInfo property)
