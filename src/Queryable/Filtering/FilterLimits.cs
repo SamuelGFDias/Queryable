@@ -69,9 +69,10 @@ public sealed class FilterLimits
     /// Decisão deliberada: esta instância nunca é mutada pela configuração via DI
     /// (<c>AddQueryableDynamicFilter(Action&lt;FilterLimits&gt;)</c> sempre cria uma
     /// <see cref="FilterLimits"/> nova e separada para registrar no container). Consequência
-    /// prática: código com acesso a <c>HttpContext.RequestServices</c> (ex.:
-    /// <c>QuerySpecModelBinder&lt;T&gt;.BindModelAsync</c>) resolve e aplica os limites
-    /// configurados normalmente; a porta JSON (<see cref="FilterNodeJsonConverter"/>), por não
+    /// prática: código com acesso ao container (ex.:
+    /// <c>QuerySpecModelBinder&lt;T&gt;.BindModelAsync</c> via <c>HttpContext.RequestServices</c>,
+    /// ou <c>PagedQueryService</c> do pacote EF Core, que recebe <see cref="FilterLimits"/> por
+    /// injeção de construtor) resolve e aplica os limites configurados normalmente; a porta JSON (<see cref="FilterNodeJsonConverter"/>), por não
     /// ter acesso ao container, sempre valida contra estes defaults, mesmo que a aplicação tenha
     /// configurado limites diferentes via DI. Ver a documentação de
     /// <see cref="FilterNodeJsonConverter"/> para essa limitação.

@@ -70,7 +70,11 @@ public static class ServiceCollectionExtensions
     /// <remarks>
     /// Registra o <see cref="FilterLimits"/> resultante como <c>Singleton</c>, resolvível por
     /// <c>QuerySpecModelBinder&lt;T&gt;.BindModelAsync</c> via
-    /// <c>HttpContext.RequestServices</c>. Não afeta <see cref="FilterLimits.Default"/> — código
+    /// <c>HttpContext.RequestServices</c> e injetado no construtor de <c>PagedQueryService</c>
+    /// (pacote EF Core). Chame esta sobrecarga <b>antes</b> de
+    /// <c>AddQueryableDynamicFilterEfCore()</c>: o registro usa <c>TryAddSingleton</c>, então se
+    /// o pacote EF Core já tiver registrado a instância padrão, esta configuração é ignorada
+    /// silenciosamente. Não afeta <see cref="FilterLimits.Default"/> — código
     /// estático sem acesso a DI (a porta JSON via <see cref="Queryable.Filtering.FilterNodeJsonConverter"/>,
     /// ou uma chamada direta a <c>FilterExpressionParser.Parse</c> fora de um binder) continua
     /// validando contra os defaults, independentemente desta configuração (ver a documentação de
