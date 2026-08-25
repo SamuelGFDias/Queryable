@@ -175,6 +175,48 @@ Isso funciona porque `Count` é uma propriedade (de `ICollection<T>`), não uma 
 
 Este é o **único** recurso de coleção suportado hoje. `For(c => c.Produtos.Any(p => p.Ativo))` é rejeitado pelo extrator de caminhos (`ArgumentException`, chamada de método não é uma cadeia de propriedades) — filtrar pelos itens de uma coleção (`any`/`all`) não existe ainda; ver a proposta em aberto `docs/proposta-quantificadores-colecao.md`.
 
+### Filtrar ≠ ordenar: FilterOnly(), SortOnly() e ForSort()
+
+`WHERE` roda sobre a tabela toda e aceita `contains`/`in`/composição booleana; `ORDER BY` percorre só a página resultante — os dois têm perfil de risco diferente, e em alias de navegação sensível "pode ordenar" nem sempre deveria significar "pode pesquisar" (ex.: permitir `sort=paciente.cpf` sem permitir `paciente.cpf__contains=`). `For(...)` sem qualificador continua liberando os dois usos, como sempre; `FilterOnly()`/`SortOnly()` restringem um alias a um só lado, e `ForSort(...)` cobre o caso em que a chave de ordenação não é uma propriedade simples, e sim uma expressão (coalesce, concatenação, cálculo):
+
+```csharp
+using Queryable.Configuration;
+
+public class PacienteQueryConfiguration : QueryableConfiguration<Paciente>
+{
+    public PacienteQueryConfiguration()
+    {
+        // Só WHERE — este alias nunca aparece para SortBuilder.
+        For(p => p.Cpf).FilterOnly();
+
+        // Só ORDER BY — este alias nunca aparece para FilterBuilder.
+        For(p => p.DataNascimento).SortOnly();
+
+        // Encadeável com As(), em qualquer ordem.
+        For(p => p.Categoria.Nome).As("categoria").FilterOnly();
+
+        // Ordenação por expressão arbitrária: NomeSocial se preenchido, senão Nome.
+        // As(...) é obrigatório aqui — não há alias padrão para derivar de uma expressão.
+        ForSort(p => p.NomeSocial ?? p.Nome).As("nomeExibicao");
+    }
+}
+```
+
+| Alias | Filtro (`WHERE`) | Ordenação (`ORDER BY`) |
+| --- | --- | --- |
+| `For(...)` sem qualificador | sim | sim |
+| `For(...).FilterOnly()` | sim | não |
+| `For(...).SortOnly()` | não | sim |
+| `ForSort(...).As(...)` | **nunca** | sim |
+
+O qualificador vale **pelo caminho da propriedade, não pelo nome do alias**: `For(p => p.Preco).SortOnly()` sem `As(...)` remove `preco` do mapa de filtro — e remove também qualquer alias automático que aponte para o mesmo caminho, inclusive o vindo de `[Queryable("valor")]` e o aninhado (`categoria.nome` para `For(p => p.Categoria.Nome).SortOnly()`). Não é preciso renomear com `As(...)` para a restrição valer; a comparação é estrutural, pela cadeia de `PropertyInfo`, a mesma usada por `Ignore(...)`.
+
+`ForSort(...)` nunca é filtrável — não existe `.FilterOnly()`/`.SortOnly()` para ele, e ele também não vale em `filter=`/`QueryFilter`: a árvore de filtro composto e o `QueryFilter` legado resolvem aliases exclusivamente pelo mapa de caminhos de propriedade (`GetPaths<T>(QueryableUsage.Filter)`), nunca por `GetSortExpressions<T>()`.
+
+`ForSort<TKey>` é genérico em `TKey` de propósito, não `Expression<Func<T, object>>`: um `Convert` para `object` quebraria a tradução do `OrderBy` para SQL em providers como o EF Core (provado contra SQLite na suíte EF). Chamar `ForSort(...)` sem encadear `.As(alias)` lança `InvalidOperationException` ao registrar a configuração — não há como derivar um alias textual de uma expressão arbitrária.
+
+> **Armadilha: `new SortBuilder()`/`new FilterBuilder()` sem argumentos usam um provider sem `registry`.** O construtor sem parâmetros de ambos usa uma instância padrão de `ReflectionPropertyPathProvider` criada sem `QueryableConfigurationRegistry` — toda a configuração fluente (incluindo `FilterOnly`/`SortOnly`/`ForSort`) é silenciosamente ignorada, sem erro. Resolvendo pelo DI (`AddQueryableDynamicFilter`) isso já vem certo; quem instancia os builders manualmente precisa passar `new ReflectionPropertyPathProvider(registry)` explicitamente.
+
 ### Registro no DI
 
 ```csharp
@@ -197,7 +239,7 @@ O mapa final de cada tipo é composto assim, nesta ordem:
 | --- | --- |
 | 1. Mapa automático por reflexão | Todas as propriedades públicas de `TEntity` (e navegações), como hoje — inclui aliases de `[Queryable]`. |
 | 2. `Ignore(...)` | Remove do mapa o(s) alias(es) cujo caminho corresponda estruturalmente ao caminho ignorado — a comparação é pela cadeia de `PropertyInfo`, não pelo texto do alias, então `Ignore(p => p.Preco)` remove o alias mesmo que ele venha de `[Queryable("valor")]`. |
-| 3. Aliases configurados (`For(...).As(...)`) | Cada alias configurado **sobrescreve** o automático de mesmo nome (ex.: `For(p => p.Categoria.Nome).As("categoria")` substitui o `categoria` que antes apontava só para `Categoria`) e **coexiste** com o alias automático aninhado (`categoria.nome` continua resolvendo, em paralelo a `categoria`) — os dois apontam para o mesmo caminho. Essa coexistência permite migrar o frontend para o novo alias sem quebrar o contrato HTTP num único deploy. |
+| 3. Aliases configurados (`For(...).As(...)`) | Cada alias configurado **sobrescreve** o automático de mesmo nome (ex.: `For(p => p.Categoria.Nome).As("categoria")` substitui o `categoria` que antes apontava só para `Categoria`) e **coexiste** com o alias automático aninhado (`categoria.nome` continua resolvendo, em paralelo a `categoria`) — os dois apontam para o mesmo caminho. Essa coexistência permite migrar o frontend para o novo alias sem quebrar o contrato HTTP num único deploy. O qualificador de uso (`FilterOnly()`/`SortOnly()`, ver [Filtrar ≠ ordenar](#filtrar--ordenar-filteronly-sortonly-e-forsort)) decide em qual mapa — filtro, ordenação, ou os dois — o alias entra; `GetPaths<T>()` sem parâmetro devolve só o que vale nos dois usos. |
 | 4. `OnlyMapped()` | Se chamado, descarta tudo que não veio do passo 3 — o mapa final passa a conter **apenas** os aliases declarados via `For(...)` para aquele tipo. Decisão por tipo: outras entidades, configuradas ou não, não são afetadas. |
 
 Sem `OnlyMapped()`, configurar um tipo é estritamente aditivo: nada que já era consultável por reflexão deixa de ser, mesmo depois da configuração fluente entrar em vigor. `OnlyMapped()` é a forma de fechar essa superfície — por exemplo, para impedir que um campo sensível como `SenhaHash` seja filtrável, já que sem ele qualquer propriedade pública continua exposta por padrão (ver aviso na seção anterior).
@@ -339,6 +381,8 @@ afterSpec: q => string.IsNullOrWhiteSpace(request.Sort)
 ```
 
 4. **`IQuerySpecApplier.Apply` declara retorno `IQueryable<T>`, mas o valor devolvido em runtime é sempre um `IOrderedQueryable<T>`** (produzido por `ApplySort`). Por isso `afterSpec` recebe `IQueryable<T>` — não `IOrderedQueryable<T>` — e não dá para encadear `ThenBy` ali sem um cast explícito para `IOrderedQueryable<T>` primeiro.
+
+Para ordenação padrão **composta** (mais de um campo, ex.: `nomeExibicao` seguido de `criadoem`), o mesmo padrão condicional acima dispensa o `switch` manual sobre o valor de `Sort`: declare a expressão uma vez com `ForSort(...).As(...)` (ver [Filtrar ≠ ordenar](#filtrar--ordenar-filteronly-sortonly-e-forsort)) e deixe o cliente pedi-la por nome; quando o cliente não manda `sort`, o jeito mais simples de aplicar o mesmo default é fixar `Sort = "nomeExibicao"` como valor inicial do `RequestQuery` (em vez de condicional dentro de `afterSpec`) — o próprio `SortBuilder` resolve o alias contra `GetSortExpressions<T>()`. **Em qualquer um dos dois casos, lembre que o fallback `OrderBy(x => 0)` descarta qualquer ordenação anterior silenciosamente — sem erro, sem exceção, a listagem só perde a ordem esperada**, então uma ordenação padrão nunca deve depender de ficar "pendurada" na `query` antes de `Apply`/`ApplyFilterPaginatedAsync`.
 
 ## `IProjectable<TEntity, TSelf>` — projeção sem repetir a expressão
 
@@ -665,7 +709,7 @@ Quem consome o `FilterLimits` registrado no container: `QuerySpecModelBinder<T>.
 - **`Page` e `PageSize` ignoram valores `<= 0` silenciosamente**, mantendo o valor anterior (`Page` default `1`, `PageSize` default `10`) em vez de lançar erro — vale em `QuerySpec<T>` e, por consequência, em `RequestQuery.ToQuerySpec<T>()`. É decisão de design (clamp de paginação): `?page=0` e `?page=-5` devolvem a página 1 com 200, sem sinal de que o parâmetro foi ignorado; se a sua API precisa de 400 nesse caso, valide `Page`/`PageSize` antes de chamar a biblioteca. O teto superior de `PageSize`, por outro lado, **é** erro: `FilterLimits.MaxPageSize` (default 1000) — ver [Limites de segurança](#limites-de-segurança-de-filtros-compostos).
 - **Sem `sort` explícito, `SortBuilder` aplica `OrderBy(x => 0)`.** Isso garante que `Skip`/`Take` sejam avaliados de forma determinística pelo provider LINQ, mas não implica ordem estável entre páginas no banco — se os dados mudam entre duas requisições paginadas sem ordenação real, o mesmo item pode aparecer em páginas diferentes ou ser pulado.
 - **Esse mesmo `OrderBy(x => 0)` descarta qualquer ordenação aplicada à `query` antes de `ApplyFilterPaginatedAsync`, e um `OrderBy` incondicional em `afterSpec` sobrescreve o `sort` do cliente pelo mesmo motivo** — ver [Armadilha: ordenação em `ApplyFilterPaginatedAsync`](#armadilha-ordenação-em-applyfilterpaginatedasync) para o padrão correto (ordenação padrão condicional dentro do `afterSpec`).
-- **Chave de filtro ou campo de ordenação desconhecido lança `ArgumentException`** (`"Campo 'X' não é pesquisável."` para filtro; mensagem equivalente para ordenação). Uma query string malformada ou com campo inexistente vira uma exceção não tratada — sem um middleware/filtro de exceção global, isso retorna 500 ao cliente em vez de 400. O mesmo tratamento cobre usar uma coleção diretamente em filtro ou ordenação: também lança `ArgumentException` (mensagem própria, apontando para `.Count` via configuração fluent), então um único `catch` na borda HTTP resolve os dois casos.
+- **Chave de filtro ou campo de ordenação desconhecido lança `ArgumentException`** (`"Campo 'X' não é pesquisável."` para filtro; mensagem equivalente para ordenação). Uma query string malformada ou com campo inexistente vira uma exceção não tratada — sem um middleware/filtro de exceção global, isso retorna 500 ao cliente em vez de 400. O mesmo tratamento cobre usar uma coleção diretamente em filtro ou ordenação: também lança `ArgumentException` (mensagem própria, apontando para `.Count` via configuração fluent), então um único `catch` na borda HTTP resolve os dois casos. Um alias declarado só para o outro uso (`FilterOnly()` usado em `sort=`, ou `SortOnly()`/`ForSort(...)` usado em filtro) recebe a **mesma mensagem** de campo inexistente/não pesquisável — de propósito, para não revelar pela mensagem de erro que o campo existe e só está restrito ao outro lado.
 - **`QueryFilter` malformado também lança `ArgumentException`** — um item sem `=` (ex.: `"ativo"`) ou com chave vazia (ex.: `"=true"`) invalida a requisição inteira.
 
 ## Testes
