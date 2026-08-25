@@ -49,8 +49,8 @@ public sealed class SqliteInMemoryFixture : IDisposable
             new Produto { Id = MouseId, Nome = "Mouse Gamer", Preco = 150m, Ativo = true, CategoriaId = perifericos.Id, Categoria = perifericos },
             new Produto { Id = TecladoId, Nome = "Teclado Mecanico", Preco = 300m, Ativo = true, CategoriaId = perifericos.Id, Categoria = perifericos },
             new Produto { Id = MonitorId, Nome = "Monitor 24 Polegadas", Preco = 900m, Ativo = false, CategoriaId = perifericos.Id, Categoria = perifericos },
-            new Produto { Id = NotebookId, Nome = "Notebook", Preco = 3500m, Ativo = true, CategoriaId = informatica.Id, Categoria = informatica },
-            new Produto { Id = CaboHdmiId, Nome = "Cabo HDMI", Preco = 25m, Ativo = true, CategoriaId = informatica.Id, Categoria = informatica },
+            new Produto { Id = NotebookId, Nome = "Notebook", NomeSocial = "Aaa Note", Preco = 3500m, Ativo = true, CategoriaId = informatica.Id, Categoria = informatica },
+            new Produto { Id = CaboHdmiId, Nome = "Cabo HDMI", NomeSocial = "Zzz Cabo", Preco = 25m, Ativo = true, CategoriaId = informatica.Id, Categoria = informatica },
             new Produto { Id = ImpressoraId, Nome = "Impressora", Preco = 700m, Ativo = false, CategoriaId = escritorio.Id, Categoria = escritorio }
         );
 

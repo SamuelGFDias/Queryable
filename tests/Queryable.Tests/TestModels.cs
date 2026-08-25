@@ -23,6 +23,7 @@ public class Produto
 {
     public Guid Id { get; set; }
     public string Nome { get; set; } = string.Empty;
+    public string? NomeSocial { get; set; }
 
     [Queryable("valor")]
     public decimal Preco { get; set; }

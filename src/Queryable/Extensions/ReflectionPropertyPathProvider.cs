@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq.Expressions;
 using System.Reflection;
 using Queryable.Configuration;
 using Queryable.Interfaces;
@@ -36,7 +37,8 @@ namespace Queryable.Extensions;
 /// </remarks>
 public sealed class ReflectionPropertyPathProvider : IPropertyPathProvider
 {
-    private readonly ConcurrentDictionary<Type, IReadOnlyDictionary<string, List<PropertyInfo>>> _cache = new();
+    private readonly ConcurrentDictionary<(Type Type, QueryableUsage Usage), IReadOnlyDictionary<string, List<PropertyInfo>>> _cache = new();
+    private readonly ConcurrentDictionary<Type, IReadOnlyDictionary<string, LambdaExpression>> _sortExpressionsCache = new();
     private readonly QueryableConfigurationRegistry? _registry;
 
     /// <summary>Cria o provider sem nenhuma configuração fluente — resolução 100% por reflexão.</summary>
@@ -56,9 +58,17 @@ public sealed class ReflectionPropertyPathProvider : IPropertyPathProvider
 
     /// <inheritdoc />
     public IReadOnlyDictionary<string, List<PropertyInfo>> GetPaths<T>() =>
-        _cache.GetOrAdd(typeof(T), _ => BuildFinalMap<T>());
+        GetPaths<T>(QueryableUsage.All);
 
-    private IReadOnlyDictionary<string, List<PropertyInfo>> BuildFinalMap<T>()
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, List<PropertyInfo>> GetPaths<T>(QueryableUsage usage) =>
+        _cache.GetOrAdd((typeof(T), usage), key => BuildFinalMap<T>(key.Usage));
+
+    /// <inheritdoc />
+    public IReadOnlyDictionary<string, LambdaExpression> GetSortExpressions<T>() =>
+        _sortExpressionsCache.GetOrAdd(typeof(T), _ => BuildSortExpressions<T>());
+
+    private IReadOnlyDictionary<string, List<PropertyInfo>> BuildFinalMap<T>(QueryableUsage usage)
     {
         Dictionary<string, List<PropertyInfo>> automatico = PathExtension.BuildPropertyPaths<T>();
 
@@ -68,19 +78,53 @@ public sealed class ReflectionPropertyPathProvider : IPropertyPathProvider
 
         RemoverCaminhosIgnorados(automatico, config.IgnoredPaths);
 
+        // Só entram aliases cujo Uso contém TODOS os bits pedidos em `usage`. Aliases automáticos
+        // por reflexão são sempre QueryableUsage.All, então já sobrevivem aos dois usos sem
+        // filtragem adicional. Com usage == All, só aliases configurados como All entram — um
+        // alias FilterOnly/SortOnly nunca aparece no mapa "All" (ver QueryableUsage).
+        IEnumerable<KeyValuePair<string, (List<PropertyInfo> Caminho, QueryableUsage Uso)>> aliasesParaUso =
+            config.MappedAliases.Where(par => (par.Value.Uso & usage) == usage);
+
+        // Todo alias cujo Uso NÃO contém `usage` (ex.: For(p => p.Preco).SortOnly() ao montar o
+        // mapa de Filter) precisa levar consigo, para fora deste mapa, o caminho automático
+        // equivalente que `PathExtension.BuildPropertyPaths<T>` já colocou em `automatico` — senão
+        // o caminho fica filtrável/ordenável por reflexão mesmo com a restrição de uso configurada
+        // (ex.: "preco" continuando filtrável mesmo com SortOnly sem As()). A remoção é por
+        // caminho estrutural (DeclaringType + Name de cada PropertyInfo, via CaminhoEquivalente) e
+        // não pelo texto do alias, pela mesma razão de RemoverCaminhosIgnorados: o alias
+        // configurado pode não coincidir textualmente com o alias automático (padrão ou vindo de
+        // [Queryable("...")]) que aponta para o mesmo caminho. Isso vale também para usage == All:
+        // com esta correção, o caminho automático de um alias FilterOnly/SortOnly também sai do
+        // mapa "All", e não só o próprio alias configurado.
+        List<List<PropertyInfo>> caminhosForaDoUso = config.MappedAliases
+            .Where(par => (par.Value.Uso & usage) != usage)
+            .Select(par => par.Value.Caminho)
+            .ToList();
+
+        RemoverCaminhosIgnorados(automatico, caminhosForaDoUso);
+
         if (config.OnlyMapped)
         {
             var somenteMapeado = new Dictionary<string, List<PropertyInfo>>(StringComparer.OrdinalIgnoreCase);
-            foreach ((string alias, List<PropertyInfo> caminho) in config.MappedAliases)
+            foreach ((string alias, (List<PropertyInfo> caminho, _)) in aliasesParaUso)
                 somenteMapeado[alias] = caminho;
 
             return somenteMapeado;
         }
 
-        foreach ((string alias, List<PropertyInfo> caminho) in config.MappedAliases)
+        foreach ((string alias, (List<PropertyInfo> caminho, _)) in aliasesParaUso)
             automatico[alias] = caminho;
 
         return automatico;
+    }
+
+    private IReadOnlyDictionary<string, LambdaExpression> BuildSortExpressions<T>()
+    {
+        QueryableTypeConfiguration? config = _registry?.GetConfiguration(typeof(T));
+
+        return config is null
+            ? new Dictionary<string, LambdaExpression>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, LambdaExpression>(config.SortExpressions, StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>

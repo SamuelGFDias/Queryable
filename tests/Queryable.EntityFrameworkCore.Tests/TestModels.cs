@@ -28,6 +28,13 @@ public class Produto
 {
     public Guid Id { get; set; }
     public string Nome { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Nome social opcional, usado por <see cref="AliasUsageEfTests"/> para provar que
+    /// <c>ForSort(p =&gt; p.NomeSocial ?? p.Nome)</c> traduz o coalesce para SQL contra SQLite.
+    /// <c>null</c> na maioria dos produtos do seed.
+    /// </summary>
+    public string? NomeSocial { get; set; }
     public decimal Preco { get; set; }
     public bool Ativo { get; set; }
     public int CategoriaId { get; set; }

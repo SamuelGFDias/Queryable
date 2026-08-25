@@ -28,8 +28,11 @@ namespace Queryable.Configuration;
 /// </remarks>
 public abstract class QueryableConfiguration<TEntity> : IQueryableConfigurationSource where TEntity : class
 {
-    private readonly Dictionary<string, List<PropertyInfo>> _aliasesMapeados = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, (List<PropertyInfo> Caminho, QueryableUsage Uso)> _aliasesMapeados =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly List<List<PropertyInfo>> _caminhosIgnorados = [];
+    private readonly Dictionary<string, LambdaExpression> _expressoesOrdenacao = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<QueryableSortExpressionBuilder<TEntity>> _buildersOrdenacao = [];
     private bool _somenteMapeados;
 
     /// <summary>
@@ -78,25 +81,88 @@ public abstract class QueryableConfiguration<TEntity> : IQueryableConfigurationS
     protected void OnlyMapped() => _somenteMapeados = true;
 
     /// <summary>
-    /// Registra (ou sobrescreve) um alias explícito. Chamado pelo construtor de
-    /// <see cref="QueryablePropertyBuilder{TEntity}"/> e por <see cref="QueryablePropertyBuilder{TEntity}.As"/>.
+    /// Inicia a configuração de uma expressão de ordenação composta (ex.:
+    /// <c>ForSort(p =&gt; p.NomeSocial ?? p.Nome)</c>). Diferente de <see cref="For{TProperty}"/>,
+    /// não fica restrito a uma cadeia de propriedades — aceita qualquer
+    /// <see cref="Expression{TDelegate}"/> que <c>SortBuilder</c> consiga usar como chave de
+    /// <c>OrderBy</c>/<c>ThenBy</c>. Genérico em <typeparamref name="TKey"/> de propósito, e não
+    /// <c>Expression&lt;Func&lt;TEntity, object&gt;&gt;</c>: um <c>Convert</c> para <c>object</c>
+    /// quebraria a tradução do <c>OrderBy</c> em providers como o EF Core.
+    /// </summary>
+    /// <remarks>
+    /// Não há alias padrão para uma expressão arbitrária — <see cref="QueryableSortExpressionBuilder{TEntity}.As"/>
+    /// é obrigatório. <see cref="Build"/> lança <see cref="InvalidOperationException"/> se este
+    /// builder ficar sem <c>As(...)</c>.
+    /// </remarks>
+    protected QueryableSortExpressionBuilder<TEntity> ForSort<TKey>(Expression<Func<TEntity, TKey>> keySelector)
+    {
+        ArgumentNullException.ThrowIfNull(keySelector);
+
+        var builder = new QueryableSortExpressionBuilder<TEntity>(this, keySelector);
+        _buildersOrdenacao.Add(builder);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Registra (ou sobrescreve) um alias explícito, com o uso padrão <see cref="QueryableUsage.All"/>.
+    /// Chamado pelo construtor de <see cref="QueryablePropertyBuilder{TEntity}"/> e por
+    /// <see cref="QueryablePropertyBuilder{TEntity}.As"/>.
     /// </summary>
     internal void RegistrarAlias(string alias, List<PropertyInfo> caminho) =>
-        _aliasesMapeados[alias] = caminho;
+        RegistrarAlias(alias, caminho, QueryableUsage.All);
+
+    /// <summary>
+    /// Registra (ou sobrescreve) um alias explícito com o uso informado. Usado por
+    /// <see cref="QueryablePropertyBuilder{TEntity}.As"/> para preservar o uso já definido
+    /// (<see cref="QueryablePropertyBuilder{TEntity}.FilterOnly"/>/<see cref="QueryablePropertyBuilder{TEntity}.SortOnly"/>)
+    /// ao renomear o alias.
+    /// </summary>
+    internal void RegistrarAlias(string alias, List<PropertyInfo> caminho, QueryableUsage uso) =>
+        _aliasesMapeados[alias] = (caminho, uso);
 
     /// <summary>Remove um alias explícito previamente registrado (usado quando <c>As</c> renomeia o alias padrão).</summary>
     internal void RemoverAlias(string alias) =>
         _aliasesMapeados.Remove(alias);
+
+    /// <summary>
+    /// Redefine o uso (<see cref="QueryableUsage"/>) do alias atualmente registrado, preservando o
+    /// caminho de propriedades. Chamado por <see cref="QueryablePropertyBuilder{TEntity}.FilterOnly"/>
+    /// e <see cref="QueryablePropertyBuilder{TEntity}.SortOnly"/>.
+    /// </summary>
+    internal void DefinirUso(string alias, QueryableUsage uso)
+    {
+        if (_aliasesMapeados.TryGetValue(alias, out (List<PropertyInfo> Caminho, QueryableUsage Uso) entrada))
+            _aliasesMapeados[alias] = (entrada.Caminho, uso);
+    }
+
+    /// <summary>
+    /// Registra (ou sobrescreve) o alias de uma expressão de ordenação composta. Chamado por
+    /// <see cref="QueryableSortExpressionBuilder{TEntity}.As"/>.
+    /// </summary>
+    internal void RegistrarExpressaoOrdenacao(string alias, LambdaExpression expressao) =>
+        _expressoesOrdenacao[alias] = expressao;
+
+    /// <summary>Remove o alias de uma expressão de ordenação previamente registrado (usado quando <c>As</c> renomeia).</summary>
+    internal void RemoverExpressaoOrdenacao(string alias) =>
+        _expressoesOrdenacao.Remove(alias);
 
     private static string AliasPadrao(List<PropertyInfo> caminho) =>
         string.Join(".", caminho.Select(p => p.Name.ToLowerInvariant()));
 
     Type IQueryableConfigurationSource.EntityType => typeof(TEntity);
 
-    QueryableTypeConfiguration IQueryableConfigurationSource.Build() =>
-        new(
+    QueryableTypeConfiguration IQueryableConfigurationSource.Build()
+    {
+        QueryableSortExpressionBuilder<TEntity>? semAlias = _buildersOrdenacao.FirstOrDefault(b => !b.TemAlias);
+        if (semAlias is not null)
+            throw new InvalidOperationException("ForSort(...) exige As(alias).");
+
+        return new(
             typeof(TEntity),
-            new Dictionary<string, List<PropertyInfo>>(_aliasesMapeados, StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, (List<PropertyInfo> Caminho, QueryableUsage Uso)>(_aliasesMapeados, StringComparer.OrdinalIgnoreCase),
             _caminhosIgnorados.ToList(),
-            _somenteMapeados);
+            _somenteMapeados,
+            new Dictionary<string, LambdaExpression>(_expressoesOrdenacao, StringComparer.OrdinalIgnoreCase));
+    }
 }

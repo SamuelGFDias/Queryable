@@ -21,6 +21,7 @@ public sealed class QueryablePropertyBuilder<TEntity> where TEntity : class
     private readonly QueryableConfiguration<TEntity> _configuracao;
     private readonly List<PropertyInfo> _caminho;
     private string _aliasAtual;
+    private QueryableUsage _uso = QueryableUsage.All;
 
     internal QueryablePropertyBuilder(
         QueryableConfiguration<TEntity> configuracao,
@@ -49,8 +50,37 @@ public sealed class QueryablePropertyBuilder<TEntity> where TEntity : class
         if (!string.Equals(_aliasAtual, normalizado, StringComparison.OrdinalIgnoreCase))
             _configuracao.RemoverAlias(_aliasAtual);
 
-        _configuracao.RegistrarAlias(normalizado, _caminho);
+        // Preserva o uso já definido por FilterOnly()/SortOnly() ao renomear o alias.
+        _configuracao.RegistrarAlias(normalizado, _caminho, _uso);
         _aliasAtual = normalizado;
+
+        return this;
+    }
+
+    /// <summary>
+    /// Restringe este alias a filtro — ele não aparece no mapa consultado por <c>SortBuilder</c>
+    /// (<see cref="Queryable.Interfaces.IPropertyPathProvider.GetPaths{T}(QueryableUsage)"/> com
+    /// <see cref="QueryableUsage.Sort"/>). Encadeável com <see cref="As"/> em qualquer ordem;
+    /// chamar <see cref="SortOnly"/> depois substitui esta restrição (last-write-wins).
+    /// </summary>
+    public QueryablePropertyBuilder<TEntity> FilterOnly()
+    {
+        _uso = QueryableUsage.Filter;
+        _configuracao.DefinirUso(_aliasAtual, _uso);
+
+        return this;
+    }
+
+    /// <summary>
+    /// Restringe este alias a ordenação — ele não aparece no mapa consultado por
+    /// <c>FilterBuilder</c> (<see cref="Queryable.Interfaces.IPropertyPathProvider.GetPaths{T}(QueryableUsage)"/>
+    /// com <see cref="QueryableUsage.Filter"/>). Encadeável com <see cref="As"/> em qualquer ordem;
+    /// chamar <see cref="FilterOnly"/> depois substitui esta restrição (last-write-wins).
+    /// </summary>
+    public QueryablePropertyBuilder<TEntity> SortOnly()
+    {
+        _uso = QueryableUsage.Sort;
+        _configuracao.DefinirUso(_aliasAtual, _uso);
 
         return this;
     }

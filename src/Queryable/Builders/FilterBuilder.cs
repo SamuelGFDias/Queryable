@@ -1,6 +1,7 @@
 ﻿using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
+using Queryable.Configuration;
 using Queryable.Extensions;
 using Queryable.Filtering;
 using Queryable.Interfaces;
@@ -31,7 +32,7 @@ namespace Queryable.Builders
             ParameterExpression parameter = Expression.Parameter(typeof(T), "x");
 
             // Mapeia alias para cadeia de propriedades (path)
-            IReadOnlyDictionary<string, List<PropertyInfo>> properties = _pathProvider.GetPaths<T>();
+            IReadOnlyDictionary<string, List<PropertyInfo>> properties = _pathProvider.GetPaths<T>(QueryableUsage.Filter);
 
             FilterNode tree = ToFilterTree(queryParams);
             Expression body = Compile(tree, parameter, properties);
@@ -44,7 +45,7 @@ namespace Queryable.Builders
             ArgumentNullException.ThrowIfNull(filter);
 
             ParameterExpression parameter = Expression.Parameter(typeof(T), "x");
-            IReadOnlyDictionary<string, List<PropertyInfo>> properties = _pathProvider.GetPaths<T>();
+            IReadOnlyDictionary<string, List<PropertyInfo>> properties = _pathProvider.GetPaths<T>(QueryableUsage.Filter);
 
             Expression body = Compile(filter, parameter, properties);
 
@@ -68,7 +69,7 @@ namespace Queryable.Builders
                 return BuildPredicate<T>(queryParams);
 
             ParameterExpression parameter = Expression.Parameter(typeof(T), "x");
-            IReadOnlyDictionary<string, List<PropertyInfo>> properties = _pathProvider.GetPaths<T>();
+            IReadOnlyDictionary<string, List<PropertyInfo>> properties = _pathProvider.GetPaths<T>(QueryableUsage.Filter);
 
             FilterNode tree = new FilterGroup(FilterLogic.And, [ToFilterTree(queryParams), filter]);
             Expression body = Compile(tree, parameter, properties);
