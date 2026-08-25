@@ -559,7 +559,7 @@ Qualquer erro de sintaxe (parêntese ou aspas não fechados, palavra-chave sem a
 
 As duas portas acima (JSON via `Filter` e mini-linguagem via `filter`/`FilterExpression`) aceitam uma expressão booleana arbitrária vinda de um cliente externo — na prática, um pequeno "programa" que o servidor concorda em executar. Sem teto, uma árvore muito aninhada ou com centenas de nós faz o compilador `FilterNode → Expression` montar uma `Expression` gigante e o banco planejar um `WHERE` desproporcional — negação de serviço tanto na aplicação (tempo/memória de montagem) quanto no banco (tempo de planejamento/execução da query). Não é preciso má-fé: um frontend com bug montando a expressão dentro de um laço já é suficiente.
 
-`FilterLimits` (`Queryable.Filtering`) define quatro tetos, todos com default:
+`FilterLimits` (`Queryable.Filtering`) define cinco tetos, todos com default:
 
 | Limite | Default | O que protege |
 | --- | --- | --- |
@@ -567,6 +567,7 @@ As duas portas acima (JSON via `Filter` e mini-linguagem via `filter`/`FilterExp
 | `MaxNodes` | `100` | Número total de nós (`FilterCondition` + `FilterGroup` + `FilterNot`, somados recursivamente) na árvore. |
 | `MaxExpressionLength` | `4096` | Tamanho, em caracteres, da string de entrada da mini-linguagem — verificado antes de tokenizar. |
 | `MaxInItems` | `200` | Quantidade de itens na lista CSV de uma condição com `operator: "in"`. |
+| `MaxPageSize` | `1000` | Volume da página: `PageSize` acima disso é rejeitado. Os quatro anteriores protegem a *complexidade* do filtro; este protege o *tamanho da resposta*. |
 
 ### Como configurar
 
@@ -587,7 +588,8 @@ builder.Services.AddQueryableDynamicFilter(limits =>
 A validação ocorre **antes** de qualquer compilação para `Expression`:
 
 - `MaxExpressionLength` é verificado sobre a string bruta da mini-linguagem, antes mesmo de tokenizar — uma expressão absurdamente longa é rejeitada por tamanho mesmo que sintaticamente inválida, sem gastar tempo de parsing nela.
-- Os outros três limites são verificados por `FilterLimitValidator.Validate` logo depois que a árvore é montada (ao final de `FilterExpressionParser.Parse`) ou desserializada (`FilterNodeJsonConverter.Read`), sempre antes de o compilador `FilterNode → Expression` de `FilterBuilder` tocar nela.
+- `MaxDepth`, `MaxNodes` e `MaxInItems` são verificados por `FilterLimitValidator.Validate` logo depois que a árvore é montada (ao final de `FilterExpressionParser.Parse`) ou desserializada (`FilterNodeJsonConverter.Read`), sempre antes de o compilador `FilterNode → Expression` de `FilterBuilder` tocar nela.
+- `MaxPageSize` é verificado por `FilterLimitValidator.ValidatePageSize` ao final de `QuerySpecModelBinder<T>.BuildSpec` e de `RequestQueryExtensions.ToQuerySpec<T>()` (e, por consequência, em `PagedQueryService`), sobre o `PageSize` já normalizado pelo setter de `QuerySpec<T>` — valores `<= 0` continuam sendo descartados em silêncio (ver [Limitações e armadilhas](#limitações-e-armadilhas-conhecidas)); só o teto superior é erro. Um `QuerySpec<T>` montado à mão e aplicado direto por `IQuerySpecApplier` não passa por essa checagem.
 
 Como consequência, uma árvore que **ao mesmo tempo** excede um limite e referencia um campo inexistente falha pelo limite, não pelo campo — o validador nunca resolve nomes de propriedade (isso é responsabilidade de uma etapa posterior e separada, o compilador), então o único erro possível nesse cenário é `FilterLimitExceededException`.
 
@@ -597,7 +599,7 @@ Em `RequestQuery`, `Filter` (árvore JSON) e `FilterExpression` (mini-linguagem)
 
 ### O erro
 
-Um limite violado lança `FilterLimitExceededException` (`Queryable.Filtering`), especialização de `ArgumentException`. Expõe `Limit` (`FilterLimitKind`: `MaxDepth`, `MaxNodes`, `MaxExpressionLength` ou `MaxInItems`), `Found` (o valor efetivamente encontrado) e `Allowed` (o teto configurado), além da mensagem já com os números embutidos.
+Um limite violado lança `FilterLimitExceededException` (`Queryable.Filtering`), especialização de `ArgumentException`. Expõe `Limit` (`FilterLimitKind`: `MaxDepth`, `MaxNodes`, `MaxExpressionLength`, `MaxInItems` ou `MaxPageSize`), `Found` (o valor efetivamente encontrado) e `Allowed` (o teto configurado), além da mensagem já com os números embutidos.
 
 ### Resposta HTTP: 400 em vez de 500
 
@@ -605,11 +607,26 @@ Um limite violado lança `FilterLimitExceededException` (`Queryable.Filtering`),
 
 Essa conversão para 400 é específica do binder — o método estático `QuerySpecModelBinder<T>.BuildSpec` continua **lançando** as duas exceções (é assim que fica testável sem infraestrutura web), e `RequestQueryExtensions.ToQuerySpec<T>()` (Caminho B, chamado manualmente dentro da ação do controller) também lança normalmente. Se você chama `ToQuerySpec<T>()` você mesmo dentro de uma ação, sem um middleware de exceção global, o mesmo erro ainda vira 500.
 
-### Limitação conhecida: o conversor JSON sempre usa os defaults
+### Levando os limites configurados ao conversor JSON
 
-`FilterNodeJsonConverter` (o `JsonConverter<FilterNode>` que desserializa `Filter`) valida a árvore assim que termina de montá-la, mas `System.Text.Json` não passa `IServiceProvider` para um `JsonConverter`, então essa validação usa sempre `FilterLimits.Default` — os limites configurados via `AddQueryableDynamicFilter(Action<FilterLimits>)` no container de DI não chegam até ali. Consequência prática: se você configurar limites **mais permissivos** que os defaults (ex.: `MaxNodes = 200`), um corpo JSON com 150 nós ainda é barrado pelos defaults (100) na desserialização, antes mesmo de chegar ao binder ou a `ToQuerySpec`.
+`FilterNodeJsonConverter` (o `JsonConverter<FilterNode>` que desserializa `Filter`) valida a árvore assim que termina de montá-la. `System.Text.Json` não passa `IServiceProvider` para um `JsonConverter`, então a instância criada pelo atributo `[JsonConverter]` de `FilterNode` (construtor sem argumentos) valida contra `FilterLimits.Default`. Isso **não** é intransponível: o `System.Text.Json` dá precedência a um conversor registrado em `JsonSerializerOptions.Converters` sobre o atributo do tipo, e quem monta as opções de JSON está dentro do container. Basta registrar uma instância construída com os limites configurados — `JsonSerializerOptionsExtensions.AddQueryableFilterLimits` (`Queryable.Extensions`) faz isso, de forma idempotente:
 
-Os limites configurados são de fato aplicados depois, na revalidação da árvore final feita por `QuerySpecModelBinder<T>.BuildSpec` e por `RequestQueryExtensions.ToQuerySpec<T>()` — mas só protegem contra limites **mais restritivos** que os defaults, porque tudo que já passou pelo conversor JSON necessariamente respeitou os defaults primeiro.
+```csharp
+using Queryable.Extensions;
+using Queryable.Filtering;
+
+// MVC / controllers ([FromBody] QuerySpec<T>, [FromBody] RequestQuery)
+builder.Services.AddOptions<Microsoft.AspNetCore.Mvc.JsonOptions>()
+    .Configure<FilterLimits>((o, limits) => o.JsonSerializerOptions.AddQueryableFilterLimits(limits));
+
+// Minimal API
+builder.Services.AddOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>()
+    .Configure<FilterLimits>((o, limits) => o.SerializerOptions.AddQueryableFilterLimits(limits));
+```
+
+O `FilterLimits` injetado no `Configure` é o mesmo `Singleton` registrado por `AddQueryableDynamicFilter(Action<FilterLimits>)`. O pacote núcleo não referencia o framework ASP.NET Core, por isso esse registro é feito pela aplicação e não automaticamente por `AddQueryableDynamicFilter`. Se você serializa por conta própria com `JsonSerializerOptions` próprias, chame `AddQueryableFilterLimits` nelas.
+
+**Sem esse registro**, o corpo JSON é validado contra os defaults na desserialização, e os limites configurados só valem na revalidação da árvore final feita por `QuerySpecModelBinder<T>.BuildSpec` e `RequestQueryExtensions.ToQuerySpec<T>()` — o que protege contra limites **mais restritivos** que os defaults, mas não permite limites **mais permissivos** (um `MaxNodes = 200` não deixa passar um corpo JSON de 150 nós, porque o conversor já barrou em 100). Com o registro, as duas direções funcionam.
 
 Quem consome o `FilterLimits` registrado no container: `QuerySpecModelBinder<T>.BindModelAsync` (via `HttpContext.RequestServices`) e `PagedQueryService` do pacote EF Core (via injeção de construtor, repassado a `ToQuerySpec<T>(limits)`). Se você chama `RequestQueryExtensions.ToQuerySpec<T>()` manualmente, passe o `FilterLimits` resolvido do DI — sem o argumento, o método usa `FilterLimits.Default`.
 
@@ -620,7 +637,7 @@ Quem consome o `FilterLimits` registrado no container: `QuerySpecModelBinder<T>.
 - **Navegação bidirecional é segura; coleções não são navegáveis; há teto de profundidade.** `PathExtension.BuildPropertyPaths<T>` tem três guardas contra o mapeamento explodir: (1) **guarda de coleção** — uma propriedade cujo tipo implementa `IEnumerable` (e não é `string`) continua entrando no mapa de aliases, mas a recursão não desce dentro dela; isso elimina o vetor clássico de recursão infinita em navegação bidirecional de EF Core (`Produto.Categoria` / `Categoria.Produtos`) e também os aliases lixo que antes vinham de `List<T>` (`.capacity`, `.count`, `.item`); (2) **guarda de ciclo por caminho** — um tipo já presente no caminho atual não é reentrado, mas isso vale só por caminho, não globalmente, de propósito: ramos irmãos do mesmo tipo (ex.: `Pedido.EnderecoEntrega` e `Pedido.EnderecoCobranca`, ambos `Endereco`) continuam os dois mapeados; (3) **limite de profundidade** — `MaxDepth = 5` níveis de aninhamento, além disso o mapeamento simplesmente para de descer. Na prática, isso significa que `Produto.Categoria` e `Categoria.Produtos` coexistindo não quebra mais nada, mas também que não dá para filtrar *através* de uma coleção (`categoria.produtos.nome` não é endereçável — só o que estiver até 5 níveis de navegação simples de profundidade).
 - **O operador `in` usa a mesma conversão de valor dos demais operadores.** `BuildInExpression` (em `Builders/FilterBuilder.cs`) compartilha o conversor escalar usado por `ConvertValue`, então `Guid`, enum, `DateOnly`, `TimeOnly`, `Nullable<T>` e o literal `"null"` funcionam normalmente dentro de `in` — por exemplo `id__in=3fa85f64-5717-4562-b3fc-2c963f66afa6,7c9e6679-7425-40de-944b-e07fc1f90ae7` funciona. Duas coisas a saber: uma lista `in` sem nenhum item válido após o split lança `ArgumentException`; e itens vazios ou só com espaço em branco na lista são ignorados silenciosamente (`id__in=1,,2` equivale a `id__in=1,2`).
 - **`contains` só é suportado em `string`.** Usar `contains` em qualquer outra propriedade lança `NotSupportedException`.
-- **`Page` e `PageSize` ignoram valores `<= 0` silenciosamente**, mantendo o valor anterior (`Page` default `1`, `PageSize` default `10`) em vez de lançar erro — vale em `QuerySpec<T>` e, por consequência, em `RequestQuery.ToQuerySpec<T>()`.
+- **`Page` e `PageSize` ignoram valores `<= 0` silenciosamente**, mantendo o valor anterior (`Page` default `1`, `PageSize` default `10`) em vez de lançar erro — vale em `QuerySpec<T>` e, por consequência, em `RequestQuery.ToQuerySpec<T>()`. É decisão de design (clamp de paginação): `?page=0` e `?page=-5` devolvem a página 1 com 200, sem sinal de que o parâmetro foi ignorado; se a sua API precisa de 400 nesse caso, valide `Page`/`PageSize` antes de chamar a biblioteca. O teto superior de `PageSize`, por outro lado, **é** erro: `FilterLimits.MaxPageSize` (default 1000) — ver [Limites de segurança](#limites-de-segurança-de-filtros-compostos).
 - **Sem `sort` explícito, `SortBuilder` aplica `OrderBy(x => 0)`.** Isso garante que `Skip`/`Take` sejam avaliados de forma determinística pelo provider LINQ, mas não implica ordem estável entre páginas no banco — se os dados mudam entre duas requisições paginadas sem ordenação real, o mesmo item pode aparecer em páginas diferentes ou ser pulado.
 - **Esse mesmo `OrderBy(x => 0)` descarta qualquer ordenação aplicada à `query` antes de `ApplyFilterPaginatedAsync`, e um `OrderBy` incondicional em `afterSpec` sobrescreve o `sort` do cliente pelo mesmo motivo** — ver [Armadilha: ordenação em `ApplyFilterPaginatedAsync`](#armadilha-ordenação-em-applyfilterpaginatedasync) para o padrão correto (ordenação padrão condicional dentro do `afterSpec`).
 - **Chave de filtro ou campo de ordenação desconhecido lança `ArgumentException`** (`"Campo 'X' não é pesquisável."` para filtro; mensagem equivalente para ordenação). Uma query string malformada ou com campo inexistente vira uma exceção não tratada — sem um middleware/filtro de exceção global, isso retorna 500 ao cliente em vez de 400.
