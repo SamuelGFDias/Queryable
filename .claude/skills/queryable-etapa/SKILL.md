@@ -7,7 +7,7 @@ description: Use ao implementar uma etapa do docs/plano-implementacao.md neste r
 
 ## Ponto de partida
 
-`docs/plano-implementacao.md` tem as etapas 0 a 10, cada uma com versão alvo, dependências e critério de pronto. Leia a etapa alvo ANTES de planejar. As propostas que originam as etapas estão em `docs/proposta-filtros-compostos.md` e `docs/proposta-configuracao-fluent.md`.
+`docs/plano-implementacao.md` tem as etapas 0 a 10, cada uma com versão alvo, dependências e critério de pronto. Leia a etapa alvo ANTES de planejar. As propostas que originam as etapas estão em `docs/proposta-filtros-compostos.md` e `docs/proposta-configuracao-fluent.md`. As etapas 7 a 10 nasceram diretamente de issues do GitHub, não de proposta — quem quiser o histórico de decisão dessas etapas tem que ir na issue, não em `docs/`. `docs/proposta-quantificadores-colecao.md` é a terceira proposta do repositório.
 
 As propostas costumam ter uma seção de "questões em aberto" — são decisões de API pública. Levante-as e pergunte todas de uma vez, antes de começar a implementar, em vez de travar no meio da etapa. Exemplo real: na etapa 3, decidir antecipadamente que `OnlyMapped()` seria explícito e que os aliases automáticos continuariam coexistindo com os configurados definiu a implementação inteira, e as duas decisões juntas transformaram uma mudança arriscada em adoção incremental.
 
@@ -84,6 +84,18 @@ dotnet test tests/Queryable.Tests/Queryable.Tests.csproj -c Release
 O gate completo (build da solução + as duas suítes) roda uma vez, no fim, antes de integrar. Existem duas suítes: `tests/Queryable.Tests` (núcleo) e `tests/Queryable.EntityFrameworkCore.Tests` (contra SQLite in-memory, que é o único caminho que pega erro de tradução para SQL — `List<T>.AsQueryable()` mascara isso porque executa em memória).
 
 Quando o usuário perguntar se algo funciona, não responda lendo o código — monte um projeto descartável **fora do repositório**, referencie o **pacote publicado** e execute. Isso já corrigiu suposições três vezes: alias de navegação profunda, conversão de `decimal` dependente de cultura, e suporte a coleções (a verificação revelou que `.Count` funciona porque é propriedade, enquanto `.Any(...)` não funciona porque é método — nenhuma leitura do código teria deixado isso óbvio). Para qualquer coisa que gere `Expression`, verifique contra EF Core com SQLite, nunca só `List<T>.AsQueryable()`, pelo mesmo motivo que vale para as suítes: LINQ to Objects executa em memória o que o provider relacional não traduz.
+
+## Lições das Etapas 7 a 10
+
+**`System.Text.Json` exige construtor realmente sem parâmetros.** Um construtor primário com parâmetro opcional (`class X(FilterLimits? limits = null)`) é, em IL, construtor de um parâmetro — o STJ falha com "does not have a public parameterless constructor" ao instanciar um `JsonConverter` via atributo `[JsonConverter]`. Solução usada em `src/Queryable/Filtering/FilterNodeJsonConverter.cs`: dois construtores explícitos. Só apareceu ao rodar a suíte; a compilação passa.
+
+**Configuração concreta em arquivo de teste vaza para a varredura de assembly.** `AddQueryableConfigurationsFromAssembly` instancia toda classe concreta não genérica derivada de `QueryableConfiguration<T>` no assembly de teste e `Register` é last-write-wins por tipo — uma config aninhada num teste novo sobrescreveu a de outro teste (`ServiceCollectionExtensionsTests`). Padrão adotado: harness GENÉRICO (`Harness<TEntity> : QueryableConfiguration<TEntity> where TEntity : class`) expondo `ChamarFor`/`ChamarForSort`, porque definição genérica fica fora da varredura (`tests/Queryable.Tests/ColecaoTests.cs`, `AliasUsageTests.cs`). Na suíte EF não há varredura, então classe concreta é segura lá.
+
+**Testes que só usam `As(...)` escondem defeito no alias padrão.** `FilterOnly()/SortOnly()` sem `As` não restringia nada (o alias automático de mesmo caminho continuava no mapa do uso proibido) e os 25 testes do núcleo passaram porque todos renomeavam; foi a suíte EF, exercitando o caso sem `As`, que pegou. Lição: ao testar qualificador/override de alias, cubra explicitamente o caminho SEM `As` e o alias vindo de `[Queryable("...")]`. A correção compara por caminho (`CaminhoEquivalente`), como `Ignore` (`src/Queryable/Extensions/ReflectionPropertyPathProvider.cs`).
+
+**Ressalva de subagente é pendência, de novo.** O relatório do agente EF declarou "2 falhas revelam defeito de produção" e manteve os testes como evidência em vez de enfraquecê-los — foi o comportamento certo, e o arquiteto tratou como bloqueio antes do commit. Contra-exemplo a evitar: trocar o alias no teste para "fazer passar".
+
+**Um arquivo com hunks de duas preocupações se separa com `git add -p` roteirizado.** `FilterBuilder.cs` recebeu mudanças da Etapa 10 e do fix #10 ao mesmo tempo; `git diff -U5` para mapear os hunks e `printf 'n\nn\nn\nn\ny\n' | git add -p -- arquivo` para stagear só um, conferindo com `git diff --cached` antes de commitar. Preferível a um commit misto; se a ordem dos hunks não for óbvia, pare e reporte em vez de chutar.
 
 ## Ao terminar a etapa
 
