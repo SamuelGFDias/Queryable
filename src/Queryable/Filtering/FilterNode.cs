@@ -39,7 +39,51 @@ public enum FilterLogic
 /// Agrupamento de nós filhos combinados por <see cref="FilterLogic.And"/> ou
 /// <see cref="FilterLogic.Or"/>.
 /// </summary>
-public sealed record FilterGroup(FilterLogic Logic, IReadOnlyList<FilterNode> Children) : FilterNode;
+/// <remarks>
+/// <b>Igualdade estrutural.</b> A igualdade sintetizada pelo compilador para <c>record</c> usa
+/// <see cref="EqualityComparer{T}.Default"/> em cada membro — e para <see cref="Children"/>
+/// (uma <see cref="IReadOnlyList{T}"/>, normalmente <c>List&lt;T&gt;</c> ou array) isso é
+/// comparação por <i>referência</i>, então duas árvores idênticas seriam "diferentes" e não
+/// serviriam como chave de dicionário. Por isso <see cref="Equals(FilterGroup)"/> e
+/// <see cref="GetHashCode"/> são sobrescritos para comparar <see cref="Logic"/> e os filhos
+/// <b>elemento a elemento, na ordem</b> (a ordem importa: <c>[a, b]</c> ≠ <c>[b, a]</c>).
+/// <see cref="FilterCondition"/> e <see cref="FilterNot"/> já têm igualdade por valor de fábrica,
+/// então a recursão pelos filhos acontece pelo próprio <c>Equals</c> deles. Custo O(n) no número
+/// de nós; a recursão é limitada pela profundidade da árvore, que as portas externas já
+/// restringem via <see cref="FilterLimits.MaxDepth"/> — uma árvore montada em código sem limite
+/// é responsabilidade do chamador.
+/// </remarks>
+public sealed record FilterGroup(FilterLogic Logic, IReadOnlyList<FilterNode> Children) : FilterNode
+{
+    /// <inheritdoc cref="FilterGroup"/>
+    public bool Equals(FilterGroup? other)
+    {
+        if (other is null)
+            return false;
+        if (ReferenceEquals(this, other))
+            return true;
+        if (Logic != other.Logic || Children.Count != other.Children.Count)
+            return false;
+
+        for (int i = 0; i < Children.Count; i++)
+        {
+            if (!Equals(Children[i], other.Children[i]))
+                return false;
+        }
+
+        return true;
+    }
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(Logic);
+        hash.Add(Children.Count);
+        foreach (FilterNode child in Children)
+            hash.Add(child);
+        return hash.ToHashCode();
+    }
+}
 
 /// <summary>
 /// Negação lógica do nó interno.

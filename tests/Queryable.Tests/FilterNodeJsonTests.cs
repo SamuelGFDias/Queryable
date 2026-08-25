@@ -230,40 +230,10 @@ public class FilterNodeJsonTests
         string json = JsonSerializer.Serialize(original);
         FilterNode roundTripped = JsonSerializer.Deserialize<FilterNode>(json)!;
 
-        // Assert.Equal não basta aqui: a igualdade sintetizada de record para FilterGroup
-        // compara `Children` (IReadOnlyList<FilterNode>) via EqualityComparer<T>.Default, que é
-        // referência para List<T> — o original usa um array/list literal e o round-trip produz
-        // outra List<T>, então precisa de comparação estrutural recursiva explícita.
-        AssertEquivalent(original, roundTripped);
-    }
-
-    private static void AssertEquivalent(FilterNode expected, FilterNode actual)
-    {
-        switch (expected)
-        {
-            case FilterCondition expectedCondition:
-                var actualCondition = Assert.IsType<FilterCondition>(actual);
-                Assert.Equal(expectedCondition.Field, actualCondition.Field);
-                Assert.Equal(expectedCondition.Operator, actualCondition.Operator);
-                Assert.Equal(expectedCondition.Value, actualCondition.Value);
-                break;
-
-            case FilterGroup expectedGroup:
-                var actualGroup = Assert.IsType<FilterGroup>(actual);
-                Assert.Equal(expectedGroup.Logic, actualGroup.Logic);
-                Assert.Equal(expectedGroup.Children.Count, actualGroup.Children.Count);
-                for (int i = 0; i < expectedGroup.Children.Count; i++)
-                    AssertEquivalent(expectedGroup.Children[i], actualGroup.Children[i]);
-                break;
-
-            case FilterNot expectedNot:
-                var actualNot = Assert.IsType<FilterNot>(actual);
-                AssertEquivalent(expectedNot.Inner, actualNot.Inner);
-                break;
-
-            default:
-                throw new NotSupportedException($"Tipo de nó '{expected.GetType().Name}' não suportado no teste.");
-        }
+        // Desde a Etapa 8 (issue #1), FilterGroup compara Children por valor, elemento a
+        // elemento — Assert.Equal é ao mesmo tempo a prova do round-trip e da igualdade
+        // estrutural (o original é array literal, o round-trip produz List<T>).
+        Assert.Equal(original, roundTripped);
     }
 
     [Fact]
