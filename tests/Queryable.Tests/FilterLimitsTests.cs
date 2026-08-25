@@ -316,3 +316,92 @@ public class FilterLimitsTests
         Assert.Throws<ArgumentNullException>(() => FilterLimitValidator.Validate(null!));
     }
 }
+
+/// <summary>
+/// Etapa 7 (issue #9): <see cref="FilterLimits.MaxPageSize"/> protege o volume da página nos
+/// mesmos pontos de entrada que revalidam a árvore de filtro. O clamp de valores
+/// <c>&lt;= 0</c> em <see cref="QuerySpec{T}.PageSize"/> é mantido e não é erro.
+/// </summary>
+public class MaxPageSizeTests
+{
+    [Fact]
+    public void FilterLimits_MaxPageSizeDefault_EhMil()
+    {
+        Assert.Equal(1000, new FilterLimits().MaxPageSize);
+    }
+
+    [Fact]
+    public void ValidatePageSize_AcimaDoTeto_LancaComKindMaxPageSize()
+    {
+        var ex = Assert.Throws<FilterLimitExceededException>(() =>
+            FilterLimitValidator.ValidatePageSize(60, new FilterLimits { MaxPageSize = 50 }));
+
+        Assert.Equal(FilterLimitKind.MaxPageSize, ex.Limit);
+        Assert.Equal(60, ex.Found);
+        Assert.Equal(50, ex.Allowed);
+    }
+
+    [Fact]
+    public void ValidatePageSize_NoTetoOuAbaixo_NaoLanca()
+    {
+        var limits = new FilterLimits { MaxPageSize = 50 };
+        Assert.Null(Record.Exception(() => FilterLimitValidator.ValidatePageSize(50, limits)));
+        Assert.Null(Record.Exception(() => FilterLimitValidator.ValidatePageSize(1, limits)));
+    }
+
+    [Fact]
+    public void BuildSpec_PageSizeAcimaDoDefault_Lanca()
+    {
+        var query = new Dictionary<string, Microsoft.Extensions.Primitives.StringValues> { ["pageSize"] = "1001" };
+
+        Assert.Throws<FilterLimitExceededException>(() => QuerySpecModelBinder<Produto>.BuildSpec(query));
+    }
+
+    [Fact]
+    public void BuildSpec_PageSizeAcimaDoConfiguradoMasAbaixoDoDefault_Lanca()
+    {
+        var query = new Dictionary<string, Microsoft.Extensions.Primitives.StringValues> { ["pageSize"] = "60" };
+
+        Assert.Throws<FilterLimitExceededException>(() =>
+            QuerySpecModelBinder<Produto>.BuildSpec(query, new FilterLimits { MaxPageSize = 50 }));
+    }
+
+    [Fact]
+    public void BuildSpec_PageSizeDentroDoConfigurado_NaoLanca()
+    {
+        var query = new Dictionary<string, Microsoft.Extensions.Primitives.StringValues> { ["pageSize"] = "50" };
+
+        QuerySpec<Produto> spec = QuerySpecModelBinder<Produto>.BuildSpec(query, new FilterLimits { MaxPageSize = 50 });
+
+        Assert.Equal(50, spec.PageSize);
+    }
+
+    [Fact]
+    public void BuildSpec_PageSizeZeroOuNegativo_ContinuaSendoDescartadoSemErro()
+    {
+        var query = new Dictionary<string, Microsoft.Extensions.Primitives.StringValues> { ["pageSize"] = "-5" };
+
+        QuerySpec<Produto> spec = QuerySpecModelBinder<Produto>.BuildSpec(query, new FilterLimits { MaxPageSize = 50 });
+
+        Assert.Equal(10, spec.PageSize);
+    }
+
+    [Fact]
+    public void ToQuerySpec_PageSizeAcimaDoConfigurado_Lanca()
+    {
+        var request = new RequestQuery { PageSize = 60 };
+
+        var ex = Assert.Throws<FilterLimitExceededException>(() =>
+            request.ToQuerySpec<Produto>(new FilterLimits { MaxPageSize = 50 }));
+
+        Assert.Equal(FilterLimitKind.MaxPageSize, ex.Limit);
+    }
+
+    [Fact]
+    public void ToQuerySpec_PageSizeAcimaDoDefault_Lanca()
+    {
+        var request = new RequestQuery { PageSize = 1001 };
+
+        Assert.Throws<FilterLimitExceededException>(() => request.ToQuerySpec<Produto>());
+    }
+}

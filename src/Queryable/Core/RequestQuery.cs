@@ -51,12 +51,18 @@ public class RequestQuery
     public string? Sort { get; set; }
 
     /// <summary>
-    /// Número da página, começando em 1. Valor padrão: <c>1</c>.
+    /// Número da página, começando em 1. Valor padrão: <c>1</c>. Valores menores ou iguais a zero
+    /// são descartados por <c>ToQuerySpec</c> (mantém o default), sem erro — ver
+    /// <see cref="QuerySpec{T}.Page"/>.
     /// </summary>
     public int Page { get; set; } = 1;
 
     /// <summary>
-    /// Quantidade de itens por página. Valor padrão: <c>10</c>.
+    /// Quantidade de itens por página. Valor padrão: <c>10</c>. Valores menores ou iguais a zero
+    /// são descartados por <c>ToQuerySpec</c> (mantém o default); valores acima de
+    /// <see cref="Queryable.Filtering.FilterLimits.MaxPageSize"/> fazem <c>ToQuerySpec</c> lançar
+    /// <see cref="Queryable.Filtering.FilterLimitExceededException"/> — ver
+    /// <see cref="QuerySpec{T}.PageSize"/>.
     /// </summary>
     public int PageSize { get; set; } = 10;
 

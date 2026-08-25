@@ -87,6 +87,25 @@ public static class FilterLimitValidator
     }
 
     /// <summary>
+    /// Valida <paramref name="pageSize"/> contra <see cref="FilterLimits.MaxPageSize"/> (de
+    /// <paramref name="limits"/>, ou <see cref="FilterLimits.Default"/> quando <c>null</c>).
+    /// Chame com o valor já normalizado pelo setter de <c>QuerySpec&lt;T&gt;.PageSize</c> — este
+    /// método só verifica o teto superior; valores menores ou iguais a zero não são erro aqui.
+    /// </summary>
+    /// <exception cref="FilterLimitExceededException">Quando <paramref name="pageSize"/> excede o teto.</exception>
+    public static void ValidatePageSize(int pageSize, FilterLimits? limits = null)
+    {
+        limits ??= FilterLimits.Default;
+
+        if (pageSize > limits.MaxPageSize)
+            throw new FilterLimitExceededException(
+                FilterLimitKind.MaxPageSize,
+                pageSize,
+                limits.MaxPageSize,
+                $"Tamanho de página excede o máximo permitido: pedido {pageSize}, permitido {limits.MaxPageSize}.");
+    }
+
+    /// <summary>
     /// Conta os itens da lista CSV de uma <see cref="FilterCondition"/> com
     /// <c>Operator == "in"</c> (comparação exata, mesmo critério usado pelo compilador em
     /// <c>Queryable.Builders.FilterBuilder</c> para reconhecer o operador) e valida contra

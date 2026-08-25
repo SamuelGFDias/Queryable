@@ -1,7 +1,7 @@
 namespace Queryable.Filtering;
 
 /// <summary>
-/// Identifica qual dos quatro tetos de <see cref="FilterLimits"/> foi violado, para o chamador
+/// Identifica qual dos tetos de <see cref="FilterLimits"/> foi violado, para o chamador
 /// de <see cref="FilterLimitExceededException"/> poder tratar cada caso sem parsear a mensagem.
 /// </summary>
 public enum FilterLimitKind
@@ -16,7 +16,10 @@ public enum FilterLimitKind
     MaxExpressionLength,
 
     /// <summary>Ver <see cref="FilterLimits.MaxInItems"/>.</summary>
-    MaxInItems
+    MaxInItems,
+
+    /// <summary>Ver <see cref="FilterLimits.MaxPageSize"/>.</summary>
+    MaxPageSize
 }
 
 /// <summary>
@@ -31,7 +34,10 @@ public enum FilterLimitKind
 /// percorrer a árvore já montada) e por
 /// <see cref="FilterExpressionParser.Parse(string,FilterLimits?)"/> (limite
 /// <see cref="FilterLimitKind.MaxExpressionLength"/>, verificado sobre a string bruta, antes de
-/// existir qualquer <see cref="FilterNode"/> para percorrer).
+/// existir qualquer <see cref="FilterNode"/> para percorrer). O limite
+/// <see cref="FilterLimitKind.MaxPageSize"/> é lançado por
+/// <see cref="FilterLimitValidator.ValidatePageSize"/> e não diz respeito à árvore de filtro, mas
+/// ao volume da página pedida.
 /// </remarks>
 public sealed class FilterLimitExceededException : ArgumentException
 {

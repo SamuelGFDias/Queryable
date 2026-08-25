@@ -1,7 +1,8 @@
 namespace Queryable.Filtering;
 
 /// <summary>
-/// Tetos de segurança aplicados a uma árvore de filtro composto (<see cref="FilterNode"/>) vinda
+/// Tetos de segurança aplicados a uma requisição vinda de cliente externo — sobretudo à árvore de
+/// filtro composto (<see cref="FilterNode"/>) vinda
 /// de um cliente externo — porta JSON (<see cref="FilterNodeJsonConverter"/>) ou mini-linguagem
 /// de query string (<see cref="FilterExpressionParser"/>) —, validados por
 /// <see cref="FilterLimitValidator"/> antes de qualquer compilação para
@@ -56,6 +57,19 @@ public sealed class FilterLimits
     public int MaxInItems { get; set; } = 200;
 
     /// <summary>
+    /// Quantidade máxima de itens por página (<c>QuerySpec&lt;T&gt;.PageSize</c>). Default
+    /// <c>1000</c>. Os demais tetos protegem a <i>complexidade</i> do filtro; este protege o
+    /// <i>volume</i> da resposta — sem ele, um cliente pode pedir <c>pageSize=1000000</c> e a
+    /// biblioteca aceita, deixando o teto inteiramente por conta da aplicação. Verificado por
+    /// <see cref="FilterLimitValidator.ValidatePageSize"/> nos mesmos pontos que revalidam a
+    /// árvore de filtro (<c>QuerySpecModelBinder&lt;T&gt;.BuildSpec</c>,
+    /// <c>RequestQueryExtensions.ToQuerySpec&lt;T&gt;</c> e, por consequência,
+    /// <c>PagedQueryService</c>). Valores de <c>PageSize</c> menores ou iguais a zero nunca chegam
+    /// aqui: o setter de <c>QuerySpec&lt;T&gt;.PageSize</c> os descarta e mantém o valor anterior.
+    /// </summary>
+    public int MaxPageSize { get; set; } = 1000;
+
+    /// <summary>
     /// Instância padrão compartilhada (todos os valores nos defaults acima), usada como
     /// <b>fallback</b> por código estático que não tem acesso ao container de DI —
     /// <see cref="FilterExpressionParser.Parse(string,FilterLimits?)"/> e
@@ -72,10 +86,11 @@ public sealed class FilterLimits
     /// prática: código com acesso ao container (ex.:
     /// <c>QuerySpecModelBinder&lt;T&gt;.BindModelAsync</c> via <c>HttpContext.RequestServices</c>,
     /// ou <c>PagedQueryService</c> do pacote EF Core, que recebe <see cref="FilterLimits"/> por
-    /// injeção de construtor) resolve e aplica os limites configurados normalmente; a porta JSON (<see cref="FilterNodeJsonConverter"/>), por não
-    /// ter acesso ao container, sempre valida contra estes defaults, mesmo que a aplicação tenha
-    /// configurado limites diferentes via DI. Ver a documentação de
-    /// <see cref="FilterNodeJsonConverter"/> para essa limitação.
+    /// injeção de construtor) resolve e aplica os limites configurados normalmente; a porta JSON
+    /// (<see cref="FilterNodeJsonConverter"/>) valida contra estes defaults <b>a menos que</b> a
+    /// aplicação registre um conversor construído com os limites configurados nas
+    /// <see cref="System.Text.Json.JsonSerializerOptions"/> — ver
+    /// <see cref="Queryable.Extensions.JsonSerializerOptionsExtensions.AddQueryableFilterLimits"/>.
     /// </remarks>
     public static FilterLimits Default { get; } = new();
 }

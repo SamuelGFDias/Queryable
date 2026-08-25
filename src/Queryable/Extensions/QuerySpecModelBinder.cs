@@ -127,6 +127,8 @@ public partial class QuerySpecModelBinder<T> : IModelBinder
         if (spec.Filter is not null)
             FilterLimitValidator.Validate(spec.Filter, limits);
 
+        FilterLimitValidator.ValidatePageSize(spec.PageSize, limits);
+
         return spec;
     }
 
