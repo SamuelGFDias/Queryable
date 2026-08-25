@@ -4,15 +4,24 @@ using Queryable.Core;
 namespace Queryable.EntityFrameworkCore.Tests;
 
 /// <summary>
-/// Entidade de navegação simples usada como alvo de filtro/projeção em navegação
-/// (<c>categoria.nome</c>). Propositalmente sem navegação de volta para <see cref="Produto"/>
-/// (unidirecional): a lib já corta ciclos em <c>PathExtension.BuildPropertyPaths</c>, então
-/// manter a navegação em um único sentido aqui deixa o teste focado no que está sendo exercitado.
+/// Entidade de navegação usada como alvo de filtro/projeção em navegação (<c>categoria.nome</c>).
+/// Desde a Etapa 9 tem a navegação de coleção de volta para <see cref="Produto"/>
+/// (bidirecional, como em EF Core real): é ela que prova, contra SQLite, a rejeição clara de
+/// coleção em filtro/ordenação (issue #2) e a tradução para SQL de
+/// <c>For(c =&gt; c.Produtos.Count)</c> (issue #3) — ver <see cref="ColecaoTests"/>.
 /// </summary>
 public class Categoria
 {
     public int Id { get; set; }
     public string Nome { get; set; } = string.Empty;
+    public List<Produto> Produtos { get; set; } = [];
+}
+
+public class CategoriaDto
+{
+    public int Id { get; set; }
+    public string Nome { get; set; } = string.Empty;
+    public int QtdProdutos { get; set; }
 }
 
 public class Produto

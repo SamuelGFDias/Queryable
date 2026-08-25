@@ -20,6 +20,28 @@ public static class PathExtension
         return result;
     }
 
+    /// <summary>
+    /// Regra única de "é coleção" compartilhada entre a guarda de recursão daqui,
+    /// <c>FilterBuilder</c> e <c>SortBuilder</c>: qualquer tipo que implemente
+    /// <see cref="IEnumerable"/>, exceto <see cref="string"/>. Centralizada para os três não
+    /// divergirem (issue #2).
+    /// </summary>
+    internal static bool IsCollectionType(Type type) =>
+        type != typeof(string) && typeof(IEnumerable).IsAssignableFrom(type);
+
+    /// <summary>
+    /// Mensagem única para o uso de uma propriedade de coleção onde só um valor escalar é
+    /// aceito (filtro ou ordenação). Aponta para o único recurso de coleção suportado:
+    /// <c>For(x =&gt; x.{Prop}.Count)</c> via configuração fluent.
+    /// </summary>
+    internal static string CollectionNotScalarMessage(string alias, string uso) =>
+        $"Campo '{alias}' é uma coleção e não pode ser usado em {uso}; para filtrar ou ordenar pela " +
+        $"quantidade de itens, mapeie-o via configuração fluent: For(x => x.{PropertyPathOf(alias)}.Count).As(\"...\"). " +
+        "Filtros sobre os itens da coleção (any/all) não são suportados.";
+
+    private static string PropertyPathOf(string alias) =>
+        string.Join('.', alias.Split('.').Select(s => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..]));
+
     private static void BuildPathsRecursively(
         Type type,
         List<PropertyInfo> currentPath,
@@ -54,10 +76,7 @@ public static class PathExtension
             // para filtrar/ordenar. Descer nelas também é o vetor clássico de recursão infinita
             // do EF Core (ex.: Categoria.Produtos -> Produto.Categoria -> ...) e gera aliases
             // lixo vindos dos próprios membros da lista (Capacity, Count, Item...).
-            bool isCollection = prop.PropertyType != typeof(string)
-                             && typeof(IEnumerable).IsAssignableFrom(prop.PropertyType);
-
-            if (isCollection)
+            if (IsCollectionType(prop.PropertyType))
                 continue;
 
             // recursão: se for um tipo de navegação (classe), descer mais um nível

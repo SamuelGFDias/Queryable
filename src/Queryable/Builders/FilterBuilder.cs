@@ -146,6 +146,13 @@ namespace Queryable.Builders
             if (!properties.TryGetValue(condition.Field, out List<PropertyInfo>? path))
                 throw new ArgumentException($"Campo '{condition.Field}' não é pesquisável.");
 
+            // Coleções ficam no mapa (PathExtension não desce nelas, mas registra a propriedade),
+            // então um alias como "produtos" resolve — e sem esta guarda o valor seria convertido
+            // para List<T> por Convert.ChangeType, estourando InvalidCastException (500) em vez
+            // de um erro de entrada claro (issue #2).
+            if (PathExtension.IsCollectionType(path[^1].PropertyType))
+                throw new ArgumentException(PathExtension.CollectionNotScalarMessage(condition.Field, "filtro escalar"));
+
             // Constrói MemberExpression encadeado conforme path
             Expression member = path.Aggregate<PropertyInfo, Expression>(
                 parameter,

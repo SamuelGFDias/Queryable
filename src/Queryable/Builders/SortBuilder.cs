@@ -44,6 +44,11 @@ public class SortBuilder : ISortBuilder
             if (!properties.TryGetValue(propertyName, out List<PropertyInfo>? path))
                 throw new ArgumentException($"Campo de ordenação '{propertyName}' não encontrado.");
 
+            // Mesma guarda de FilterBuilder.CompileCondition (issue #2): sem ela, OrderBy<T, List<X>>
+            // falha na reflexão/tradução com erro obscuro.
+            if (PathExtension.IsCollectionType(path[^1].PropertyType))
+                throw new ArgumentException(PathExtension.CollectionNotScalarMessage(propertyName, "ordenação"));
+
             Expression member = path.Aggregate<PropertyInfo, Expression>(
                 parameter,
                 Expression.Property);
