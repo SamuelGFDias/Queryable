@@ -3,6 +3,7 @@ using global::Microsoft.EntityFrameworkCore;
 using Queryable.Core;
 using Queryable.EntityFrameworkCore.Interfaces;
 using Queryable.Extensions;
+using Queryable.Filtering;
 using Queryable.Interfaces;
 
 namespace Queryable.EntityFrameworkCore.Services;
@@ -13,8 +14,16 @@ namespace Queryable.EntityFrameworkCore.Services;
 /// Entity Framework Core para materializar a página já projetada para o DTO.
 /// </summary>
 /// <param name="querySpecApplier">Serviço do núcleo responsável por aplicar o <see cref="QuerySpec{T}"/>.</param>
-public class PagedQueryService(IQuerySpecApplier querySpecApplier) : IPagedQueryService
+/// <param name="limits">
+/// Tetos de segurança de filtro composto (<see cref="FilterLimits"/>) usados ao converter o
+/// <see cref="RequestQuery"/> em <see cref="QuerySpec{T}"/>. Quando resolvido pelo container de
+/// DI, recebe a instância registrada por <c>AddQueryableDynamicFilter</c> (customizada ou não);
+/// quando instanciado manualmente sem esse argumento, cai em <see cref="FilterLimits.Default"/>.
+/// </param>
+public class PagedQueryService(IQuerySpecApplier querySpecApplier, FilterLimits? limits = null) : IPagedQueryService
 {
+    private readonly FilterLimits _limits = limits ?? FilterLimits.Default;
+
     /// <inheritdoc />
     public async Task<PagedResult<TDto>> ApplyFilterPaginatedAsync<TEntity, TDto>(
         IQueryable<TEntity> query,
@@ -29,7 +38,7 @@ public class PagedQueryService(IQuerySpecApplier querySpecApplier) : IPagedQuery
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(projection);
 
-        QuerySpec<TEntity> spec = request.ToQuerySpec<TEntity>();
+        QuerySpec<TEntity> spec = request.ToQuerySpec<TEntity>(_limits);
 
         IQueryable<TEntity> filtered = querySpecApplier.Apply(query.AsNoTracking(), spec);
 
