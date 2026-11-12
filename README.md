@@ -24,6 +24,23 @@ Se você usa EF Core e quer o serviço de paginação pronto, instale também:
 dotnet add package Queryable.DynamicFilter.EntityFrameworkCore
 ```
 
+## Skill para assistente de código (setup e migração)
+
+O repositório traz uma skill em [`skills/queryable-dynamicfilter`](https://github.com/SamuelGFDias/Queryable/tree/main/skills/queryable-dynamicfilter) que guia um assistente como o Claude Code em dois trabalhos: **setup inicial** da biblioteca num projeto ASP.NET Core (instalação, DI, escolha entre `QuerySpec<T>` e `RequestQuery`, restrição dos campos expostos, erros como `400`) e **migração** de um projeto que usa uma versão anterior, com as mudanças de comportamento versão a versão desde a `10.1.0`.
+
+Para usar no Claude Code, copie a pasta para `.claude/skills/` do seu projeto (ou para `~/.claude/skills/`, para valer em todos):
+
+```bash
+base=https://raw.githubusercontent.com/SamuelGFDias/Queryable/main/skills/queryable-dynamicfilter
+dest=.claude/skills/queryable-dynamicfilter
+mkdir -p "$dest/references"
+curl -fsSL "$base/SKILL.md" -o "$dest/SKILL.md"
+curl -fsSL "$base/references/setup.md" -o "$dest/references/setup.md"
+curl -fsSL "$base/references/migracao.md" -o "$dest/references/migracao.md"
+```
+
+Depois, é só pedir algo como "configura o Queryable.DynamicFilter neste projeto" ou "atualiza o Queryable.DynamicFilter para a última versão". No claude.ai, a mesma pasta compactada em `.zip` pode ser enviada como skill.
+
 ## Setup / DI
 
 Núcleo — registra `IFilterBuilder`, `ISortBuilder` e `IQuerySpecApplier` como `Scoped` (idempotente: chamadas repetidas não sobrescrevem registros já feitos):

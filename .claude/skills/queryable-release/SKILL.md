@@ -55,6 +55,10 @@ git worktree add --detach /tmp/verify <commit>
 git worktree remove --force /tmp/verify
 ```
 
+## Skill de consumidor: registrar a versão nova
+
+`skills/queryable-dynamicfilter/references/migracao.md` é a skill que os **usuários** da biblioteca carregam para migrar entre versões. Antes de taggear, acrescente a seção da versão nova (e a linha na tabela de resumo), marcando o que é **[HTTP]**, **[código]** ou **[aditivo]**, e atualize a versão final citada no topo do arquivo. Se o setup mudou (novo registro no DI, novo passo obrigatório), atualize também `references/setup.md`.
+
 ## Pré-voo: inspecionar o que seria publicado
 
 Crie a tag **localmente**, empacote, inspecione, e **apague a tag** antes de decidir:

@@ -132,6 +132,10 @@ O CI do GitLab (`.gitlab-ci.yml`) delega ao pipeline compartilhado `ses-rj/ci-cd
 
 Mensagens de commit seguem `AGENTS.md`: `<ícone> Queryable - <categoria>: <descrição>` em português, com categorias fixas (`feat` ✨, `bugfix` 🐛, `refactor` ♻️, `remove` 🔥, `chore` 🧹, `docs` 📚, `test` 🧪, `build` ⚙️, `ci` 🔧, `deps` 📦, `perf` 🚀, `style` 🎨). Até `v10.3.0` (commits até `77e1f07`), `AGENTS.md` grafava o prefixo `Qeryable` (sem o "u") e o histórico é inconsistente entre `Qeryable` e `Queryable`; a partir daqui `AGENTS.md` foi corrigido para `Queryable` e commits novos devem usar essa grafia. O histórico antigo não foi reescrito.
 
+## Skill para consumidores
+
+`skills/queryable-dynamicfilter/` (fora de `.claude/`, de propósito: não é skill de desenvolvimento deste repositório) é uma skill para quem **usa** os pacotes: `SKILL.md` guia setup inicial e migração, `references/setup.md` tem o passo a passo de configuração e `references/migracao.md` as mudanças de comportamento versão a versão desde `10.1.0`. O `README.md` aponta para ela com URLs absolutas do GitHub (o README vai para o nuget.org, onde link relativo quebra). A cada release, acrescente a versão nova em `migracao.md` — a skill `queryable-release` lembra disso.
+
 ## Repomix
 
 `repomix.config.json` empacota o repo em Markdown para consumo por LLM. `.repomixignore` ainda exclui `Api/` (projeto já removido) e `Queryable.slnx`. `repomix-output.xml` é um artefato versionado e desatualizado (formato XML antigo, anterior ao move para `src/`); a config atual gera `repomix-output.md`, que é gitignorado.
